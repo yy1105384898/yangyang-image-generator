@@ -51,7 +51,8 @@ a:focus-visible {
   background: linear-gradient(180deg, #f7f7f4 0%, #f2f2ef 100%);
   color: var(--text);
 }
-body.studio-active .home-page {
+body.studio-active .home-page,
+body.research-active .home-page {
   display: none;
 }
 
@@ -633,6 +634,10 @@ body.studio-active .home-page {
 }
 body.studio-active .studio-view {
   display: block;
+}
+
+body.research-active .studio-view {
+  display: none;
 }
 
 .app-shell {
@@ -5111,6 +5116,8 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
 }
 
 .research-workbench {
+  display: none;
+  min-height: 100vh;
   padding: 76px clamp(22px, 4vw, 64px) 84px;
   background:
     linear-gradient(rgba(16, 22, 21, .035) 1px, transparent 1px),
@@ -5120,6 +5127,10 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
     linear-gradient(135deg, #f7f2e7, #edf5f0);
   background-size: 28px 28px, 28px 28px, auto, auto, auto;
   color: var(--text);
+}
+
+body.research-active .research-workbench {
+  display: block;
 }
 
 .research-head {

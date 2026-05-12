@@ -168,13 +168,14 @@ let preflightOriginalPrompt = "";
 function applyRoute() {
   const anchor = location.hash || "#home";
   document.body.classList.toggle("studio-active", anchor === "#studio");
+  document.body.classList.toggle("research-active", anchor === "#research");
   if (anchor !== "#studio") {
     hideGuide(false);
   }
   const target = document.querySelector(anchor);
   if (target) {
     window.requestAnimationFrame(() => {
-      target.scrollIntoView({ block: "start", behavior: anchor === "#studio" ? "auto" : "smooth" });
+      target.scrollIntoView({ block: "start", behavior: anchor === "#studio" || anchor === "#research" ? "auto" : "smooth" });
     });
   }
   maybeAutoShowGuide(anchor);
