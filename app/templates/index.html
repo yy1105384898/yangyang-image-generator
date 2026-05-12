@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 生图工作台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121705">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121820">
 </head>
 <body>
   <main id="home" class="home-page">
@@ -17,13 +17,15 @@
         </a>
         <nav class="home-nav-links">
           <a href="#home-product">工作台</a>
+          <a href="#research">科研工作台</a>
           <a href="#home-analysis">智能分析</a>
           <a href="#home-agents">行业 Agent</a>
           <a href="#market">广场</a>
           <a href="#home-local">本地接入</a>
         </nav>
         <div class="home-nav-actions">
-          <a class="home-nav-action" href="#studio">打开工作台</a>
+          <a class="home-nav-action" href="#studio">商业生图台</a>
+          <a class="home-nav-action research-action" href="#research">科研工作台</a>
           <a class="home-nav-action" href="#market">进入广场</a>
           <a class="home-admin-link" href="{{ url_for('admin') }}">管理后台</a>
         </div>
@@ -36,7 +38,8 @@
         <h1>YANGYANGAPI<br>生图<br>工作台</h1>
         <p>从一句提示词，到一组可复用的视觉资产。把智能分析、批量生成、并行队列和本地图库，放进一个安静、清晰、反应迅速的创作空间。</p>
         <div class="home-hero-actions">
-          <a class="home-primary" href="#studio">开始生成 <span>→</span></a>
+          <a class="home-primary" href="#studio">商业生图台 <span>→</span></a>
+          <a class="home-secondary research-secondary" href="#research">科研工作台</a>
           <a class="home-secondary" href="#home-flow">了解流程</a>
           <a class="home-secondary" href="#market">浏览广场</a>
         </div>
@@ -198,7 +201,121 @@
         <h2>本地接入优先。外网自动兜底。</h2>
       </div>
       <p>工作台默认优先尝试局域网内的 New API 地址；本地不可达时，再按后台配置走中转代理或浏览器直连。图片、任务和历史记录保存在当前服务的数据目录里，方便继续查看和管理。</p>
-      <a class="home-primary dark" href="#studio">打开工作台 →</a>
+      <a class="home-primary dark" href="#studio">进入商业生图台 →</a>
+    </section>
+
+    <section class="research-workbench" id="research">
+      <header class="research-head">
+        <div>
+          <span class="home-kicker">Research Canvas</span>
+          <h2>科研工作台</h2>
+          <p>参考 ResearchCanvasAI 的画布流程，把科研图提示词、提示词仓库、局部编辑、局部截图重绘、高清放大和线稿/色稿双控制集中到一个入口。</p>
+        </div>
+        <div class="research-head-actions">
+          <a class="home-secondary" href="#studio">商业生图台</a>
+          <button id="researchApplyToStudio" class="home-primary dark" type="button">发送到生图台 →</button>
+        </div>
+      </header>
+
+      <div class="research-layout">
+        <aside class="research-panel">
+          <div class="research-section-title"><span>01</span><strong>科研图提示词</strong></div>
+          <label class="research-field">
+            <span>研究主题 / 设备对象</span>
+            <input id="researchSubject" value="200 L 不锈钢反应釜与管路系统" placeholder="例如：细胞机制示意图、反应釜结构图、论文图形摘要">
+          </label>
+          <label class="research-field">
+            <span>项目内容 / 论文草稿 / 模块说明</span>
+            <textarea id="researchProjectContext" rows="5" placeholder="把项目说明、论文摘要、实验流程、模块设计或关键逻辑粘贴到这里。Codex 会先整理主线，再按 S-C-S-S 输出绘图 Prompt。"></textarea>
+          </label>
+          <label class="research-field">
+            <span>图类型</span>
+            <select id="researchFigureType">
+              <option value="mechanism">机制示意图</option>
+              <option value="apparatus" selected>实验装置图</option>
+              <option value="abstract">论文图形摘要</option>
+              <option value="workflow">流程图</option>
+              <option value="local-redraw">局部重绘方案</option>
+            </select>
+          </label>
+          <label class="research-field">
+            <span>视觉风格</span>
+            <select id="researchStyle">
+              <option value="nature">Nature 风格干净矢量科研插图</option>
+              <option value="cell">Cell 图形摘要风格</option>
+              <option value="blueprint">工程蓝图 + 真实材质混合</option>
+              <option value="lineart">极简白底线稿</option>
+            </select>
+          </label>
+          <label class="research-field">
+            <span>生成提示词</span>
+            <textarea id="researchPrompt" rows="10"></textarea>
+          </label>
+          <div class="research-button-row">
+            <button id="researchBuildPrompt" type="button">按 S-C-S-S 生成</button>
+            <button id="researchCopyPrompt" type="button">复制</button>
+          </div>
+          <div id="researchScssCards" class="research-scss-cards"></div>
+        </aside>
+
+        <section class="research-canvas-card">
+          <div class="research-canvas-toolbar">
+            <button data-research-tool="select" class="active" type="button">选择</button>
+            <button data-research-tool="zoom-in" type="button">放大</button>
+            <button data-research-tool="crop" type="button">局部截图重绘</button>
+            <button data-research-tool="edit" type="button">局部编辑</button>
+            <span id="researchCanvasStatus">100%</span>
+          </div>
+          <div class="research-canvas" id="researchCanvas">
+            <div class="research-grid"></div>
+            <article class="research-node research-node-image">
+              <span>元素提取</span>
+              <div class="research-reactor-figure">
+                <div class="reactor-motor"></div>
+                <div class="reactor-neck"></div>
+                <div class="reactor-body"><strong>200 L</strong></div>
+                <div class="reactor-leg left"></div>
+                <div class="reactor-leg right"></div>
+                <div class="reactor-pipe pipe-left"></div>
+                <div class="reactor-pipe pipe-right"></div>
+              </div>
+              <p>可作为实验装置图、局部高清重生成和线稿/色稿双控制的对象。</p>
+            </article>
+            <article class="research-node research-node-prompt">
+              <span>工作流节点</span>
+              <strong>线稿图 + 色稿图双控制</strong>
+              <p>上传线稿约束结构，上传色稿约束材质与配色，再发送到图生图/编辑流程。</p>
+            </article>
+          </div>
+        </section>
+
+        <aside class="research-panel research-tools">
+          <div class="research-section-title"><span>02</span><strong>局部与高清</strong></div>
+          <div class="research-tool-grid">
+            <button data-research-mode="upscale" type="button"><strong>高清放大</strong><span>2x / 4x 清晰化</span></button>
+            <button data-research-mode="crop" type="button"><strong>局部截图重绘</strong><span>框选局部作为新参考</span></button>
+            <button data-research-mode="inpaint" type="button"><strong>局部编辑</strong><span>保留结构，只改目标区域</span></button>
+            <button data-research-mode="dual-control" type="button"><strong>双控制重生成</strong><span>线稿控结构，色稿控质感</span></button>
+          </div>
+
+          <div class="research-section-title"><span>03</span><strong>线稿 / 色稿</strong></div>
+          <div class="research-control-upload">
+            <label>线稿图<input id="researchLineInput" type="file" accept="image/*"></label>
+            <label>色稿图<input id="researchColorInput" type="file" accept="image/*"></label>
+          </div>
+          <div class="research-preview-row">
+            <div id="researchLinePreview">线稿预览</div>
+            <div id="researchColorPreview">色稿预览</div>
+          </div>
+
+          <div class="research-section-title"><span>04</span><strong>提示词仓库</strong></div>
+          <div id="researchPromptRepo" class="research-prompt-repo"></div>
+          <div class="research-skill-note">
+            <strong>科研流程图技能</strong>
+            <span>先读项目内容，拆主体、构图、结构细节、风格，再送到生图台出初稿，最后到 PPT / AI 重绘优化。</span>
+          </div>
+        </aside>
+      </div>
     </section>
   </main>
 
@@ -623,6 +740,6 @@
   <script>
     window.YY_MODEL_CONFIG = {{ model_config|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=202605121610"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=202605121820"></script>
 </body>
 </html>

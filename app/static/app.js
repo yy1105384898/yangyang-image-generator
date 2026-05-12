@@ -2505,6 +2505,208 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
+const researchPromptPresets = [
+  {
+    id: "research-apparatus",
+    category: "实验装置",
+    name: "不锈钢反应釜装置图",
+    prompt: "生成一张实验装置科研插图，主体为 200 L 不锈钢反应釜、顶部电机、搅拌轴、进出料管路、阀门、压力表和支撑脚。要求白底，工程说明图风格，结构准确，金属材质清晰，管路层级明确，保留少量标签区域，适合论文方法图或实验平台介绍。"
+  },
+  {
+    id: "research-mechanism",
+    category: "机制图解",
+    name: "Nature 风格机制示意图",
+    prompt: "生成一张 Nature 风格干净矢量科研机制图，白色背景，多面板布局，左侧展示研究对象，中间展示关键通路与因果箭头，右侧展示结果表型。使用克制青绿色与琥珀色点缀，线宽统一，标签清晰，避免装饰性素材和不可读文字。"
+  },
+  {
+    id: "research-abstract",
+    category: "图形摘要",
+    name: "论文图形摘要",
+    prompt: "生成一张 Cell journal graphical abstract 风格科研图形摘要，中心突出核心机制，左到右因果流清楚，模块化分区，少量高可读标签，轻微阴影只用于分离层级，整体构图适合论文首页图、基金汇报和学术海报。"
+  },
+  {
+    id: "research-dual-control",
+    category: "双控制",
+    name: "线稿 + 色稿高清重生成",
+    prompt: "根据参考线稿保持结构、轮廓、管路走向和关键部件位置，根据参考色稿保持金属质感、蓝色电机、灰白背景与光照层次。对局部区域进行高清重生成，提升边缘清晰度、材质真实感和标注可读性，不改变科学结构，不添加无关零件。"
+  },
+  {
+    id: "research-scss-flow",
+    category: "S-C-S-S",
+    name: "读项目生成科研流程图",
+    prompt: "先阅读项目内容，提取研究主线、核心模块、模块关系和最终结论，再按 S-C-S-S 框架输出绘图 Prompt：Subject 主体、Composition 构图、Structure 结构细节、Style 风格渲染。目标是生成科研流程图初稿，后续可在 PPT 或 Adobe Illustrator 中重绘优化。"
+  }
+];
+
+function buildResearchPrompt() {
+  const subject = ($("#researchSubject")?.value || "科研对象").trim();
+  const context = ($("#researchProjectContext")?.value || "").trim();
+  const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研图";
+  const style = $("#researchStyle")?.selectedOptions?.[0]?.textContent || "干净科研插图";
+  const extracted = context
+    ? context.replace(/\s+/g, " ").slice(0, 520)
+    : "未提供项目正文时，基于研究主题自行拆解核心对象、流程模块、关键变量和结论关系。";
+  const base = [
+    "请先读懂下面的项目内容，再生成科研绘图 Prompt，不要直接泛泛描述。",
+    `项目内容：${extracted}`,
+    "",
+    `S - Subject（主体）：${subject}。明确图里要呈现的核心对象、研究系统、实验对象或流程主线。`,
+    `C - Composition（构图）：生成一张${figureType}，建议左到右或上到下的模块化科研流程图；主线清楚，模块关系明确，关键节点用箭头连接，保留后期重绘和标注空间。`,
+    "S - Structure（结构细节）：拆出每个模块内部元素、输入输出、变量、处理过程、结果读出和局部放大框；箭头走向必须和项目逻辑一致，不要添加无关模块。",
+    `S - Style（风格渲染）：${style}，白色或浅色背景，构图干净，信息层级清楚，适合论文图、基金汇报或科研流程图初稿。`,
+    "图像编辑要求：如果使用参考图，线稿图用于约束结构、轮廓、局部边界；色稿图用于约束材质、配色和光影。局部高清重生成时只增强选区，不改变整体科学含义。",
+    "负面控制：避免低清晰度、错别字、伪科学结构、不可读标签、随机多余零件、装饰性海报风。"
+  ];
+  return base.join("\n");
+}
+
+function renderResearchScssCards() {
+  const wrap = $("#researchScssCards");
+  if (!wrap) return;
+  const subject = ($("#researchSubject")?.value || "科研主体").trim();
+  const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研图";
+  const style = $("#researchStyle")?.selectedOptions?.[0]?.textContent || "科研插图风格";
+  const context = ($("#researchProjectContext")?.value || "").trim();
+  const cards = [
+    ["S", "Subject", subject],
+    ["C", "Composition", `${figureType}，模块化主线，箭头连接输入、处理和结果。`],
+    ["S", "Structure", context ? "按项目内容拆模块、变量、流程、输出和局部放大框。" : "粘贴项目内容后自动按项目主线拆结构。"],
+    ["S", "Style", style],
+  ];
+  wrap.innerHTML = cards.map(([letter, title, body]) => `
+    <article>
+      <b>${escapeHtml(letter)}</b>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(body)}</span>
+    </article>
+  `).join("");
+}
+
+function renderResearchPromptRepo() {
+  const repo = $("#researchPromptRepo");
+  if (!repo) return;
+  repo.innerHTML = "";
+  researchPromptPresets.forEach((preset) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.researchPreset = preset.id;
+    button.innerHTML = `
+      <small>${escapeHtml(preset.category)}</small>
+      <strong>${escapeHtml(preset.name)}</strong>
+      <span>${escapeHtml(preset.prompt)}</span>
+    `;
+    button.addEventListener("click", () => {
+      const prompt = $("#researchPrompt");
+      if (prompt) prompt.value = preset.prompt;
+      $("#researchSubject")?.focus();
+    });
+    repo.append(button);
+  });
+}
+
+function previewResearchFile(input, preview) {
+  const file = input?.files?.[0];
+  if (!file || !preview) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    preview.innerHTML = `<img src="${escapeAttr(reader.result)}" alt="">`;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function uploadResearchReference(file, name) {
+  if (!file) return null;
+  const form = new FormData();
+  form.append("file", file);
+  form.append("name", name || file.name);
+  const resp = await fetch("/api/references", {
+    method: "POST",
+    headers: { "X-YY-Client-ID": clientId },
+    body: form,
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || "参考图上传失败");
+  selectedReferenceIds.add(data.reference.id);
+  return data.reference;
+}
+
+async function applyResearchToStudio() {
+  const button = $("#researchApplyToStudio");
+  const prompt = ($("#researchPrompt")?.value || buildResearchPrompt()).trim();
+  if (!prompt) return;
+  const previousText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "发送中...";
+  }
+  try {
+    const lineFile = $("#researchLineInput")?.files?.[0];
+    const colorFile = $("#researchColorInput")?.files?.[0];
+    if (lineFile || colorFile) {
+      await Promise.all([
+        lineFile ? uploadResearchReference(lineFile, `科研线稿控制-${lineFile.name}`) : Promise.resolve(null),
+        colorFile ? uploadResearchReference(colorFile, `科研色稿控制-${colorFile.name}`) : Promise.resolve(null),
+      ]);
+      await loadState();
+    }
+    els.prompt.value = prompt;
+    els.title.value = ($("#researchSubject")?.value || "科研图").trim();
+    if ([...els.aspectRatio.options].some((item) => item.value === "1:1")) els.aspectRatio.value = "1:1";
+    if ([...els.resolution.options].some((item) => item.value === "1K")) els.resolution.value = "1K";
+    syncSummary();
+    renderReferences();
+    location.hash = "#studio";
+  } catch (err) {
+    alert(err.message || "发送到生图台失败");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
+}
+
+function initResearchWorkbench() {
+  if (!$("#research")) return;
+  const prompt = $("#researchPrompt");
+  if (prompt && !prompt.value.trim()) prompt.value = buildResearchPrompt();
+  renderResearchPromptRepo();
+  renderResearchScssCards();
+  $("#researchBuildPrompt")?.addEventListener("click", () => {
+    if (prompt) prompt.value = buildResearchPrompt();
+    renderResearchScssCards();
+  });
+  ["researchSubject", "researchProjectContext", "researchFigureType", "researchStyle"].forEach((id) => {
+    const el = $(`#${id}`);
+    el?.addEventListener("input", renderResearchScssCards);
+    el?.addEventListener("change", renderResearchScssCards);
+  });
+  $("#researchCopyPrompt")?.addEventListener("click", async () => {
+    const text = prompt?.value || "";
+    if (!text) return;
+    await navigator.clipboard?.writeText(text);
+  });
+  $("#researchApplyToStudio")?.addEventListener("click", applyResearchToStudio);
+  $("#researchLineInput")?.addEventListener("change", (event) => previewResearchFile(event.currentTarget, $("#researchLinePreview")));
+  $("#researchColorInput")?.addEventListener("change", (event) => previewResearchFile(event.currentTarget, $("#researchColorPreview")));
+  document.querySelectorAll("[data-research-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-research-mode]").forEach((item) => item.classList.toggle("active", item === button));
+      const mode = button.dataset.researchMode;
+      const promptBox = $("#researchPrompt");
+      const modePrompt = researchPromptPresets.find((item) => item.id === (mode === "dual-control" ? "research-dual-control" : ""))?.prompt;
+      if (promptBox && modePrompt) promptBox.value = modePrompt;
+    });
+  });
+  document.querySelectorAll("[data-research-tool]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-research-tool]").forEach((item) => item.classList.toggle("active", item === button));
+      const label = $("#researchCanvasStatus");
+      if (label) label.textContent = button.textContent.trim();
+    });
+  });
+}
+
 els.prompt.addEventListener("input", syncSummary);
 ["change", "input"].forEach((eventName) => {
   [els.protocol, els.model, els.apiUrl, els.apiKey, els.rememberApiKey, els.aspectRatio, els.resolution, els.count, els.concurrency, els.retryLimit, els.quality, els.outputFormat, els.seed, els.negative].forEach((el) => el.addEventListener(eventName, syncSummary));
@@ -2687,6 +2889,7 @@ syncShellToggles();
 syncAgentEntry();
 syncAgentMode();
 syncAgentComposer();
+initResearchWorkbench();
 if (!location.hash) location.hash = "#home";
 applyRoute();
 loadState();
