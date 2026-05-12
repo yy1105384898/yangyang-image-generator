@@ -2635,7 +2635,8 @@ function renderResearchPromptRepo() {
     button.addEventListener("click", () => {
       const prompt = $("#researchPrompt");
       if (prompt) prompt.value = preset.prompt;
-      $("#researchSubject")?.focus();
+      renderResearchScssCards();
+      setResearchStatus(`已载入提示词预设：${preset.name}`);
     });
     repo.append(button);
   });
@@ -2672,6 +2673,31 @@ function previewResearchFile(input, preview) {
     preview.innerHTML = `<img src="${escapeAttr(reader.result)}" alt="">`;
   };
   reader.readAsDataURL(file);
+}
+
+function readResearchPaperFile(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const title = input.closest(".research-block")?.querySelector(".research-section-title em");
+  const mirror = $("#researchProjectContextMirror");
+  if (title) title.textContent = file.name;
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  if (["txt", "md"].includes(ext || "")) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || "").trim();
+      if ($("#researchProjectContext")) $("#researchProjectContext").value = text.slice(0, 5000);
+      if (mirror) mirror.value = text.slice(0, 5000);
+      if ($("#researchPrompt")) $("#researchPrompt").value = buildResearchPrompt();
+      renderResearchScssCards();
+      setResearchStatus(`已读取 ${file.name}，并刷新科研绘图提示词`);
+    };
+    reader.readAsText(file, "utf-8");
+    return;
+  }
+  const message = `已选择 ${file.name}。PDF/DOCX 当前先作为项目附件记录，请把摘要或关键段落粘贴到左侧文本框。`;
+  if (mirror) mirror.value = message;
+  setResearchStatus(message);
 }
 
 async function uploadResearchReference(file, name) {
@@ -2731,6 +2757,7 @@ const researchCanvasState = {
   panX: 0,
   panY: 0,
   activeNode: null,
+  nodeCounter: 3,
   action: null,
   spaceDown: false,
   pointerId: null,
@@ -2776,10 +2803,258 @@ function updateResearchStage() {
   if (label) label.textContent = `${Math.round(researchCanvasState.scale * 100)}%`;
 }
 
+function updateResearchNodeCount() {
+  const count = document.querySelectorAll("#researchStage .research-node").length;
+  const label = $("#researchNodeCount");
+  if (label) label.textContent = `节点 ${count}`;
+  researchCanvasState.nodeCounter = Math.max(researchCanvasState.nodeCounter, count);
+}
+
+function setResearchStatus(message) {
+  const footer = document.querySelector(".research-canvas-footer span:first-child");
+  if (footer) footer.textContent = message;
+}
+
+function syncResearchInspector(node) {
+  const panel = document.querySelector(".research-tools");
+  if (!panel) return;
+  const titleInput = panel.querySelector('input[value="对象标题"], input[data-research-inspector-title]');
+  const status = panel.querySelector(".research-section-title em");
+  const name = node?.querySelector(".research-node-head strong")?.textContent || "对象标题";
+  if (titleInput) {
+    titleInput.dataset.researchInspectorTitle = "1";
+    titleInput.value = node ? name : "对象标题";
+  }
+  if (status) status.textContent = node ? "已选中" : "未选中";
+}
+
 function selectResearchNode(node) {
   document.querySelectorAll(".research-node.selected").forEach((item) => item.classList.remove("selected"));
   researchCanvasState.activeNode = node || null;
   node?.classList.add("selected");
+  syncResearchInspector(node);
+}
+
+function researchNodeTemplate(type, id) {
+  const promptText = ($("#researchPrompt")?.value || buildResearchPrompt()).trim();
+  const templates = {
+    image: {
+      title: "上传图片节点",
+      meta: "IMAGE-REFERENCE",
+      body: `<div class="research-generated-preview"></div><p>用于上传线稿、色稿、实验装置参考图或论文插图。</p>`,
+    },
+    prompt: {
+      title: "提示词节点",
+      meta: "PROMPT",
+      body: `<textarea aria-label="提示词节点">${escapeHtml(promptText || "在这里整理 S-C-S-S 科研绘图 Prompt")}</textarea>`,
+    },
+    "text-to-image": {
+      title: "文生图节点",
+      meta: "TEXT-TO-IMAGE",
+      body: `<textarea aria-label="文生图提示词">${escapeHtml(promptText || "生成科研流程图，展示研究主线、模块关系和结果。")}</textarea><button class="research-primary-button" data-research-generate-node="${escapeAttr(id)}" type="button">启动文生图</button>`,
+    },
+    "image-to-image": {
+      title: "图生图节点",
+      meta: "IMAGE-TO-IMAGE",
+      body: `<div class="research-generated-preview"></div><p>接收线稿/色稿/草图作为输入，用于局部重绘或风格统一。</p>`,
+    },
+    "reverse-prompt": {
+      title: "反推提示词节点",
+      meta: "IMAGE-TO-PROMPT",
+      body: `<textarea aria-label="反推提示词">从参考图提取主体、构图、结构细节和风格，输出可复用 Prompt。</textarea>`,
+    },
+    output: {
+      title: "科研图草图",
+      meta: "GENERATED-IMAGE",
+      body: `<div class="research-generated-preview"></div><p>等待生成科研图草图。</p>`,
+    },
+    text: {
+      title: "文本标注节点",
+      meta: "ANNOTATION",
+      body: `<textarea aria-label="文本标注">图注、标签、实验条件或局部说明</textarea>`,
+    },
+  };
+  const item = templates[type] || templates.prompt;
+  return `
+    <div class="research-node-head">
+      <div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.meta)}</small></div>
+      <select><option>gpt-image-2</option><option>gpt-5.5</option></select>
+      <button type="button" data-research-remove-node>×</button>
+    </div>
+    ${item.body}
+    <span class="research-port in">IN</span>
+    <span class="research-port out">OUT</span>
+    <button class="research-resize-handle" type="button" aria-label="缩放节点"></button>
+  `;
+}
+
+function createResearchNode(type = "prompt", options = {}) {
+  const stage = $("#researchStage");
+  if (!stage) return null;
+  researchCanvasState.nodeCounter += 1;
+  const id = options.id || `node-${Date.now()}-${researchCanvasState.nodeCounter}`;
+  const node = document.createElement("article");
+  node.className = `research-node research-node-${type}`;
+  node.dataset.nodeId = id;
+  node.dataset.x = String(options.x ?? 120 + (researchCanvasState.nodeCounter % 4) * 48);
+  node.dataset.y = String(options.y ?? 120 + (researchCanvasState.nodeCounter % 5) * 42);
+  node.dataset.w = String(options.w ?? (type === "text-to-image" ? 340 : 300));
+  node.innerHTML = researchNodeTemplate(type, id);
+  stage.append(node);
+  setResearchNodeGeometry(node);
+  selectResearchNode(node);
+  updateResearchNodeCount();
+  setResearchStatus(`已添加${node.querySelector(".research-node-head strong")?.textContent || "节点"}`);
+  return node;
+}
+
+function removeResearchNode(node) {
+  if (!node) return;
+  const name = node.querySelector(".research-node-head strong")?.textContent || "节点";
+  if (researchCanvasState.activeNode === node) selectResearchNode(null);
+  node.remove();
+  updateResearchNodeCount();
+  setResearchStatus(`已删除${name}`);
+}
+
+function optimizeResearchPromptText() {
+  const prompt = $("#researchPrompt");
+  if (!prompt) return;
+  const base = (prompt.value || buildResearchPrompt()).trim();
+  const additions = [
+    "请优先保证科研逻辑准确、流程箭头清楚、模块边界明确。",
+    "每个节点保留可读标签区域，避免生成无法辨认的小字。",
+    "输出适合后续在 PPT 或 Illustrator 中描图重绘的扁平矢量草图。",
+  ];
+  prompt.value = `${base}\n\n优化要求：\n${additions.map((item, idx) => `${idx + 1}. ${item}`).join("\n")}`;
+  renderResearchScssCards();
+  setResearchStatus("已补充科研绘图优化要求");
+}
+
+function sendResearchPromptToCanvas() {
+  const node = createResearchNode("prompt", { x: 150, y: 150, w: 360 });
+  if (node) setResearchStatus("已把当前提示词放到画布节点");
+}
+
+function generateResearchOutputs(sourceNode) {
+  let outputs = document.querySelectorAll(".research-node-output .research-generated-preview");
+  if (!outputs.length) {
+    createResearchNode("output", { x: 650, y: 90, w: 390 });
+    createResearchNode("output", { x: 650, y: 475, w: 390 });
+    outputs = document.querySelectorAll(".research-node-output .research-generated-preview");
+  }
+  outputs.forEach((preview, index) => {
+    preview.classList.toggle("generated", true);
+    const sourcePrompt = sourceNode?.querySelector("textarea")?.value || $("#researchPrompt")?.value || buildResearchPrompt();
+    const label = sourcePrompt.split("\n").find(Boolean)?.slice(0, 34) || "S-C-S-S 草图预览";
+    preview.innerHTML = `<strong>科研图 ${index + 1}</strong><span>${escapeHtml(label)}</span>`;
+    const node = preview.closest(".research-node");
+    const desc = node?.querySelector("p");
+    if (desc) desc.textContent = `已生成预览: ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+  });
+  const caption = document.querySelector(".research-tools .research-empty-box:not(textarea)");
+  if (caption) caption.textContent = "图注候选：基于项目内容生成科研流程图，展示输入、处理、关键变量、结果读出与后期重绘结构。";
+  selectResearchNode(sourceNode || document.querySelector(".research-node-output"));
+  setResearchStatus("已生成科研图草图预览，可继续局部重绘或高清放大");
+}
+
+function handleResearchMode(mode) {
+  const modeMap = {
+    inpaint: {
+      status: "已切换科研图编辑：可在右侧输入编辑指令后生成局部方案",
+      prompt: "科研图编辑：在不改变科学结构的前提下，优化选中科研图的模块边界、箭头走向、标签可读性和论文图质感。",
+    },
+    crop: {
+      status: "已切换局部重绘：请选中节点或上传局部截图",
+      prompt: "局部重绘：仅重绘选区范围，保持原图整体结构、配色和科学含义一致，增强边缘清晰度和局部细节。",
+    },
+    upscale: {
+      status: "已切换高清放大：会优先增强线条、标签和设备边缘",
+      prompt: "高清放大：将科研图草图放大并增强清晰度，保持箭头、标签、模块关系和原始构图不变。",
+    },
+    "dual-control": {
+      status: "已切换线稿/色稿双控制：线稿控结构，色稿控材质和配色",
+      prompt: researchPromptPresets.find((item) => item.id === "research-dual-control")?.prompt || "",
+    },
+  };
+  const item = modeMap[mode];
+  if (!item) return;
+  const promptBox = $("#researchPrompt");
+  if (promptBox && item.prompt) {
+    const current = promptBox.value.trim();
+    promptBox.value = current ? `${current}\n\n${item.prompt}` : item.prompt;
+    renderResearchScssCards();
+  }
+  setResearchStatus(item.status);
+}
+
+function autoLayoutResearchNodes() {
+  const nodes = [...document.querySelectorAll("#researchStage .research-node")];
+  const positions = [
+    [105, 210],
+    [650, 82],
+    [650, 475],
+    [105, 560],
+    [1080, 250],
+    [1080, 560],
+  ];
+  nodes.forEach((node, index) => {
+    const [x, y] = positions[index] || [120 + (index % 3) * 360, 120 + Math.floor(index / 3) * 260];
+    setResearchNodeGeometry(node, { x, y, w: Number(node.dataset.w || node.offsetWidth || 320) });
+  });
+  researchCanvasState.scale = 1;
+  researchCanvasState.panX = 0;
+  researchCanvasState.panY = 0;
+  updateResearchStage();
+  setResearchStatus("已按流程结构重新排版节点");
+}
+
+function saveResearchProject() {
+  const payload = {
+    prompt: $("#researchPrompt")?.value || "",
+    subject: $("#researchSubject")?.value || "",
+    context: $("#researchProjectContext")?.value || "",
+    nodes: [...document.querySelectorAll("#researchStage .research-node")].map((node) => ({
+      id: node.dataset.nodeId,
+      x: node.dataset.x,
+      y: node.dataset.y,
+      w: node.dataset.w,
+      html: node.innerHTML,
+      className: node.className,
+    })),
+  };
+  localStorage.setItem("yy-research-project", JSON.stringify(payload));
+  setResearchStatus("工程已保存到当前浏览器");
+}
+
+function loadResearchProject() {
+  const raw = localStorage.getItem("yy-research-project");
+  if (!raw) {
+    setResearchStatus("当前浏览器没有已保存的科研工程");
+    return;
+  }
+  const payload = JSON.parse(raw);
+  if ($("#researchPrompt")) $("#researchPrompt").value = payload.prompt || "";
+  if ($("#researchSubject")) $("#researchSubject").value = payload.subject || "";
+  if ($("#researchProjectContext")) $("#researchProjectContext").value = payload.context || "";
+  const stage = $("#researchStage");
+  if (stage && Array.isArray(payload.nodes)) {
+    stage.querySelectorAll(".research-node").forEach((node) => node.remove());
+    payload.nodes.forEach((item) => {
+      const node = document.createElement("article");
+      node.className = item.className || "research-node";
+      node.dataset.nodeId = item.id || `restored-${Date.now()}`;
+      node.dataset.x = item.x || "120";
+      node.dataset.y = item.y || "120";
+      node.dataset.w = item.w || "320";
+      node.innerHTML = item.html || researchNodeTemplate("prompt", node.dataset.nodeId);
+      stage.append(node);
+      setResearchNodeGeometry(node);
+    });
+  }
+  renderResearchScssCards();
+  updateResearchNodeCount();
+  setResearchStatus("已读取浏览器中保存的科研工程");
 }
 
 function zoomResearchCanvas(nextScale, origin) {
@@ -2922,6 +3197,7 @@ function initResearchWorkbench() {
   $("#researchBuildPrompt")?.addEventListener("click", () => {
     if (prompt) prompt.value = buildResearchPrompt();
     renderResearchScssCards();
+    setResearchStatus("已生成 S-C-S-S 科研绘图提示词");
   });
   ["researchSubject", "researchProjectContext", "researchFigureType", "researchStyle"].forEach((id) => {
     const el = $(`#${id}`);
@@ -2936,8 +3212,28 @@ function initResearchWorkbench() {
     const text = prompt?.value || "";
     if (!text) return;
     await navigator.clipboard?.writeText(text);
+    setResearchStatus("提示词已复制");
   });
   $("#researchApplyToStudio")?.addEventListener("click", applyResearchToStudio);
+  $("#researchApiButton")?.addEventListener("click", () => {
+    location.hash = "#studio";
+    els.appShell?.classList.add("settings-open");
+    setResearchStatus("API 配置沿用商业生图台，请在商业生图台右侧模型接入里填写");
+  });
+  document.querySelectorAll("[data-research-add-node]").forEach((button) => {
+    button.addEventListener("click", () => createResearchNode(button.dataset.researchAddNode || "prompt"));
+  });
+  $("#researchUploadShortcut")?.addEventListener("click", () => $("#researchPaperInput")?.click());
+  $("#researchOptimizePrompt")?.addEventListener("click", optimizeResearchPromptText);
+  $("#researchSendPromptNode")?.addEventListener("click", sendResearchPromptToCanvas);
+  $("#researchScrollPresets")?.addEventListener("click", () => {
+    $("#researchPromptRepo")?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setResearchStatus("已定位到提示词仓库");
+  });
+  $("#researchGenerateAll")?.addEventListener("click", () => generateResearchOutputs(researchCanvasState.activeNode));
+  $("#researchAutoLayout")?.addEventListener("click", autoLayoutResearchNodes);
+  $("#researchSaveProject")?.addEventListener("click", saveResearchProject);
+  $("#researchLoadProject")?.addEventListener("click", loadResearchProject);
   $("#researchToggleLeft")?.addEventListener("click", (event) => {
     researchRoot.classList.toggle("left-collapsed");
     event.currentTarget.classList.toggle("active", !researchRoot.classList.contains("left-collapsed"));
@@ -2946,15 +3242,13 @@ function initResearchWorkbench() {
     researchRoot.classList.toggle("right-collapsed");
     event.currentTarget.classList.toggle("active", !researchRoot.classList.contains("right-collapsed"));
   });
+  $("#researchPaperInput")?.addEventListener("change", (event) => readResearchPaperFile(event.currentTarget));
   $("#researchLineInput")?.addEventListener("change", (event) => previewResearchFile(event.currentTarget, $("#researchLinePreview")));
   $("#researchColorInput")?.addEventListener("change", (event) => previewResearchFile(event.currentTarget, $("#researchColorPreview")));
   document.querySelectorAll("[data-research-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll("[data-research-mode]").forEach((item) => item.classList.toggle("active", item === button));
-      const mode = button.dataset.researchMode;
-      const promptBox = $("#researchPrompt");
-      const modePrompt = researchPromptPresets.find((item) => item.id === (mode === "dual-control" ? "research-dual-control" : ""))?.prompt;
-      if (promptBox && modePrompt) promptBox.value = modePrompt;
+      handleResearchMode(button.dataset.researchMode);
     });
   });
   document.querySelectorAll("[data-research-tool]").forEach((button) => {
@@ -2973,6 +3267,7 @@ function initResearchWorkbench() {
         researchCanvasState.panX = 0;
         researchCanvasState.panY = 0;
         updateResearchStage();
+        setResearchStatus("画布视图已复位");
         return;
       }
       document.querySelectorAll("[data-research-tool]").forEach((item) => item.classList.toggle("active", item === button));
@@ -2980,7 +3275,21 @@ function initResearchWorkbench() {
       if (label) label.textContent = button.textContent.trim();
     });
   });
+  $("#researchStage")?.addEventListener("click", (event) => {
+    const removeButton = event.target.closest("[data-research-remove-node]");
+    if (removeButton) {
+      event.preventDefault();
+      removeResearchNode(removeButton.closest(".research-node"));
+      return;
+    }
+    const generateButton = event.target.closest("[data-research-generate-node]");
+    if (generateButton) {
+      event.preventDefault();
+      generateResearchOutputs(generateButton.closest(".research-node"));
+    }
+  });
   initResearchCanvasEngine();
+  updateResearchNodeCount();
 }
 
 els.prompt.addEventListener("input", syncSummary);

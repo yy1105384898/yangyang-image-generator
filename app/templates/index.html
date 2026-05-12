@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 生图工作台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605122255">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605122325">
 </head>
 <body>
   <main id="home" class="home-page">
@@ -215,7 +215,7 @@
           <strong>S-C-S-S Prompt</strong>
         </div>
         <div class="topbar-cluster right">
-          <button class="status-pill" type="button">节点 3</button>
+          <button class="status-pill" id="researchNodeCount" type="button">节点 3</button>
           <button class="topbar-toggle active" id="researchToggleRight" type="button">◫</button>
         </div>
       </header>
@@ -227,17 +227,17 @@
               <strong>Research Canvas</strong>
               <small>论文到科研图的精准画板</small>
             </div>
-            <button type="button">API</button>
+            <button id="researchApiButton" type="button">API</button>
           </div>
 
           <div class="research-block">
             <div class="research-section-title"><span>00</span><strong>节点工厂</strong><em>NODE</em></div>
             <div class="research-node-factory">
-              <button type="button">上传图片节点</button>
-              <button type="button">提示词节点</button>
-              <button type="button">文生图节点</button>
-              <button type="button">图生图节点</button>
-              <button type="button">反推提示词节点</button>
+              <button data-research-add-node="image" type="button">上传图片节点</button>
+              <button data-research-add-node="prompt" type="button">提示词节点</button>
+              <button data-research-add-node="text-to-image" type="button">文生图节点</button>
+              <button data-research-add-node="image-to-image" type="button">图生图节点</button>
+              <button data-research-add-node="reverse-prompt" type="button">反推提示词节点</button>
             </div>
           </div>
 
@@ -296,9 +296,9 @@
             <textarea id="researchPrompt" rows="10"></textarea>
           </label>
           <div class="research-button-row">
-              <button type="button">优化提示词</button>
-              <button type="button">放到画布</button>
-              <button type="button">提示词预设</button>
+              <button id="researchOptimizePrompt" type="button">优化提示词</button>
+              <button id="researchSendPromptNode" type="button">放到画布</button>
+              <button id="researchScrollPresets" type="button">提示词预设</button>
               <button id="researchCopyPrompt" type="button">复制</button>
             </div>
             <div id="researchScssCards" class="research-scss-cards"></div>
@@ -314,10 +314,10 @@
           <div class="research-editor-toolbar">
             <div class="research-toolbar-left">
               <button data-research-tool="select" class="research-icon-button active" type="button">↖</button>
-              <button class="research-icon-button" type="button">+</button>
-              <button class="research-icon-button" type="button">T</button>
-              <button class="research-icon-button" type="button">I</button>
-              <button class="research-icon-button" type="button">U</button>
+              <button data-research-add-node="prompt" class="research-icon-button" type="button">+</button>
+              <button data-research-add-node="text" class="research-icon-button" type="button">T</button>
+              <button data-research-add-node="image" class="research-icon-button" type="button">I</button>
+              <button id="researchUploadShortcut" class="research-icon-button" type="button">U</button>
               <button data-research-tool="zoom-out" class="research-icon-button" type="button">-</button>
               <button data-research-tool="zoom-in" class="research-icon-button" type="button">+</button>
               <button data-research-tool="reset-view" class="research-icon-button" type="button">0</button>
@@ -326,10 +326,10 @@
               <select><option>Auto</option><option>局域网</option><option>中转</option></select>
               <select><option>Standard</option><option>2K</option><option>4K</option></select>
               <button type="button">Auto</button>
-              <button class="research-generate-button" type="button">生成科研图</button>
-              <button type="button">重排版</button>
-              <button type="button">工程</button>
-              <button class="research-save-button" type="button">保存工程</button>
+              <button id="researchGenerateAll" class="research-generate-button" type="button">生成科研图</button>
+              <button id="researchAutoLayout" type="button">重排版</button>
+              <button id="researchLoadProject" type="button">工程</button>
+              <button id="researchSaveProject" class="research-save-button" type="button">保存工程</button>
             </div>
           </div>
           <div class="research-canvas" id="researchCanvas" tabindex="0" aria-label="科研绘图无限画布">
@@ -343,7 +343,7 @@
                 <div class="research-node-head">
                   <div><strong>文生图节点</strong><small>TEXT-TO-IMAGE</small></div>
                   <select><option>gpt-image-2</option><option>gpt-5.5</option></select>
-                  <button type="button">×</button>
+                  <button type="button" data-research-remove-node>×</button>
                 </div>
                 <textarea aria-label="节点提示词">生成科研流程图，展示实验流程、关键变量和主要结论</textarea>
                 <div class="research-node-grid">
@@ -354,7 +354,7 @@
                   <label>数量<select><option>2</option><option>1</option></select></label>
                   <label>背景<select><option>Auto</option><option>透明</option></select></label>
                 </div>
-                <button class="research-primary-button" type="button">启动文生图</button>
+                <button class="research-primary-button" data-research-generate-node="prompt" type="button">启动文生图</button>
                 <span class="research-port in">IN</span>
                 <span class="research-port out">OUT</span>
                 <button class="research-resize-handle" type="button" aria-label="缩放节点"></button>
@@ -363,7 +363,7 @@
                 <div class="research-node-head">
                   <div><strong>科研图 1</strong><small>GENERATED-IMAGE</small></div>
                   <select><option>gpt-image-2</option></select>
-                  <button type="button">×</button>
+                  <button type="button" data-research-remove-node>×</button>
                 </div>
                 <div class="research-generated-preview preview-a"></div>
                 <p>分辨率: 2048 x 1152</p>
@@ -375,7 +375,7 @@
                 <div class="research-node-head">
                   <div><strong>科研图 2</strong><small>GENERATED-IMAGE</small></div>
                   <select><option>gpt-image-2</option></select>
-                  <button type="button">×</button>
+                  <button type="button" data-research-remove-node>×</button>
                 </div>
                 <div class="research-generated-preview preview-b"></div>
                 <p>分辨率: 2048 x 1152</p>
@@ -878,6 +878,6 @@
   <script>
     window.YY_MODEL_CONFIG = {{ model_config|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=202605122255"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=202605122325"></script>
 </body>
 </html>
