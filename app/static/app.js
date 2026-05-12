@@ -2033,7 +2033,7 @@ async function refreshModels({ silent = false } = {}) {
     replaceModelOptions([]);
     renderAvailableModels();
     setModelStatus("ⓘ 填写自定义 API URL 和 API Key 后自动验证", "idle");
-    setConnectionStatus("☷ 填写自定义 API URL", "idle");
+    setConnectionStatus("填写自定义 API URL", "idle");
     setModelFetchHelp("自定义 API 适合临时接入第三方中转站或 OpenAI 兼容接口；地址通常以 /v1 结尾。", "idle");
     if (!silent) els.apiUrl.focus();
     return;
@@ -2044,7 +2044,7 @@ async function refreshModels({ silent = false } = {}) {
     replaceModelOptions([]);
     renderAvailableModels();
     setModelStatus("ⓘ 填写 API Key 后自动验证", "idle");
-    setConnectionStatus("☷ 填写 API Key 后自动验证", "idle");
+    setConnectionStatus("填写 API Key 后自动验证", "idle");
     setModelFetchHelp("API Key 可在 New API 后台的“令牌”里创建或复制；填入后会自动读取模型。", "idle");
     return;
   }
@@ -2072,7 +2072,7 @@ async function refreshModels({ silent = false } = {}) {
     if (data.api_url && els.connectionMode.value === "auto") {
       els.apiUrl.value = data.api_url;
     }
-    setConnectionStatus("⌁ 已连接", "success");
+    setConnectionStatus("已连接", "success");
     setModelStatus(`✓ API Key 有效 · ${imageModels.length} 个生图模型 · ${formatModelTime()}`, "success");
     setModelFetchHelp(`已连接：${data.api_url || selectedApiUrl() || "自动线路"}。模型 Token 可在 New API 后台“令牌”页面管理。`, "success");
   } catch (err) {
@@ -2080,7 +2080,7 @@ async function refreshModels({ silent = false } = {}) {
     verifiedImageModels = [];
     replaceModelOptions([]);
     renderAvailableModels();
-    setConnectionStatus("☷ 连接失败", "error");
+    setConnectionStatus("连接失败", "error");
     const mode = els.connectionMode.value;
     const directHint = mode === "direct"
       ? "浏览器直连域名目前只有 IPv6，局域网或当前网络不支持 IPv6 时会失败；建议切到“自动”或“中转代理”。"
