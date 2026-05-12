@@ -5120,8 +5120,11 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
 
 .research-workbench {
   display: none;
-  min-height: 100vh;
-  padding: 76px clamp(22px, 4vw, 64px) 84px;
+  width: 100vw;
+  height: 100vh;
+  min-height: 720px;
+  overflow: hidden;
+  padding: 14px;
   background:
     linear-gradient(rgba(16, 22, 21, .035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(16, 22, 21, .032) 1px, transparent 1px),
@@ -5133,7 +5136,8 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
 }
 
 body.research-active .research-workbench {
-  display: block;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .research-head {
@@ -5141,23 +5145,29 @@ body.research-active .research-workbench {
   align-items: end;
   justify-content: space-between;
   gap: 24px;
-  max-width: 1320px;
-  margin: 0 auto 26px;
+  min-height: 74px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 123, 114, .18);
+  border-radius: 16px;
+  background: rgba(255, 253, 246, .72);
+  box-shadow: 0 14px 34px rgba(16,22,21,.08), inset 0 1px rgba(255,255,255,.72);
+  backdrop-filter: blur(16px) saturate(1.12);
 }
 
 .research-head h2 {
-  margin: 8px 0 8px;
-  font-size: clamp(36px, 6vw, 78px);
-  line-height: .9;
+  margin: 4px 0 4px;
+  font-size: clamp(32px, 4vw, 54px);
+  line-height: .95;
   letter-spacing: 0;
 }
 
 .research-head p {
-  max-width: 760px;
+  max-width: 920px;
   margin: 0;
   color: var(--muted);
-  font-size: 16px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .research-head-actions {
@@ -5169,10 +5179,10 @@ body.research-active .research-workbench {
 
 .research-layout {
   display: grid;
-  grid-template-columns: minmax(270px, 330px) minmax(460px, 1fr) minmax(270px, 330px);
+  grid-template-columns: 330px minmax(0, 1fr) 350px;
   gap: 14px;
-  max-width: 1320px;
-  margin: 0 auto;
+  min-height: 0;
+  width: 100%;
 }
 
 .research-panel,
@@ -5188,6 +5198,8 @@ body.research-active .research-workbench {
   display: grid;
   align-content: start;
   gap: 14px;
+  min-height: 0;
+  overflow: auto;
   padding: 14px;
 }
 
@@ -5269,7 +5281,7 @@ body.research-active .research-workbench {
 
 .research-canvas-card {
   overflow: hidden;
-  min-height: 640px;
+  min-height: 0;
 }
 
 .research-canvas-toolbar {
@@ -5304,7 +5316,8 @@ body.research-active .research-workbench {
 
 .research-canvas {
   position: relative;
-  min-height: 596px;
+  height: calc(100vh - 150px);
+  min-height: 0;
   overflow: hidden;
   background: #f8f3e7;
 }
