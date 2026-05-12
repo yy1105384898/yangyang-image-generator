@@ -2,21 +2,27 @@ let state = { jobs: [], media: [], subjects: [], references: [], presets: [], mo
 let selectedReferenceIds = new Set();
 let selectedGalleryIds = new Set();
 let selectedHistoryJobId = null;
+let selectedHistoryDayKey = null;
+let historyExpanded = true;
+const historyDayOpen = new Map();
 const NEW_TASK_DRAFT_ID = "__new_task__";
 
 const $ = (sel) => document.querySelector(sel);
 const els = {
   compatLabel: $("#compatLabel"),
+  showAllMedia: $("#showAllMedia"),
   mediaCount: $("#mediaCount"),
   protocolSummary: $("#protocolSummary"),
   countSummary: $("#countSummary"),
   wordCount: $("#wordCount"),
+  toggleHistory: $("#toggleHistory"),
   historyList: $("#historyList"),
   galleryHeader: $("#galleryHeader"),
   mediaGrid: $("#mediaGrid"),
   emptyState: $("#emptyState"),
   prompt: $("#prompt"),
   submitJob: $("#submitJob"),
+  clearPrompt: $("#clearPrompt"),
   quickConfigButton: $("#quickConfigButton"),
   quickConfigPanel: $("#quickConfigPanel"),
   closeQuickConfig: $("#closeQuickConfig"),
@@ -38,10 +44,18 @@ const els = {
   apiUrl: $("#apiUrl"),
   apiKey: $("#apiKey"),
   rememberApiKey: $("#rememberApiKey"),
+  poolLoginPanel: $("#poolLoginPanel"),
+  poolUserName: $("#poolUserName"),
+  poolUserHint: $("#poolUserHint"),
+  poolUsername: $("#poolUsername"),
+  poolPassword: $("#poolPassword"),
+  poolLoginButton: $("#poolLoginButton"),
+  poolLogoutButton: $("#poolLogoutButton"),
   model: $("#model"),
   modelFilter: $("#modelFilter"),
   availableModelList: $("#availableModelList"),
   modelStatus: $("#modelStatus"),
+  modelFetchHelp: $("#modelFetchHelp"),
   aspectRatio: $("#aspectRatio"),
   resolution: $("#resolution"),
   count: $("#count"),
@@ -179,6 +193,33 @@ function formatTime(ts) {
   return new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false });
 }
 
+function historyDayKey(ts) {
+  const date = new Date((ts || 0) * 1000);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function historyDayLabel(key) {
+  const today = historyDayKey(Date.now() / 1000);
+  const yesterday = historyDayKey(Date.now() / 1000 - 86400);
+  if (key === today) return "今天";
+  if (key === yesterday) return "昨天";
+  const [, month, day] = key.split("-");
+  return `${Number(month)}月${Number(day)}日`;
+}
+
+function historyTimeLabel(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function jobsForHistoryDay(dayKey) {
+  if (!dayKey) return [];
+  return state.jobs.filter((job) => historyDayKey(job.created_at) === dayKey);
+}
+
 function statusText(status) {
   return { queued: "排队", running: "生成中", success: "完成", error: "失败" }[status] || status;
 }
@@ -228,21 +269,24 @@ const protocols = {
   },
 };
 
+const modelConfig = window.YY_MODEL_CONFIG || {};
+const modelConnections = modelConfig.connections || {};
+
 const connectionNotes = {
-  proxy: "中转代理使用阿里云地址：http://60.205.243.114:3004/v1。",
-  local: "本地接入使用 NAS 局域网地址：http://192.168.10.5:3004/v1。",
-  direct: "浏览器直连线路使用：https://yynewapi.yangyangnj.xin/v1。",
-  auto: "自动模式会依次尝试本地接入、中转代理、浏览器直连，哪个能连上就用哪个。",
+  proxy: modelConnections.proxy?.description || "中转代理线路，可在后台或环境变量 CONNECTION_PROXY_URL 中配置。",
+  local: modelConnections.local?.description || "本地接入线路，可在后台或环境变量 CONNECTION_LOCAL_URL 中配置。",
+  direct: modelConnections.direct?.description || "浏览器直连线路，可在后台或环境变量 CONNECTION_DIRECT_URL 中配置。",
+  auto: modelConnections.auto?.description || "自动模式会按后台配置顺序尝试可用线路。",
+  pool: modelConnections.pool?.description || "本地号池模式不需要填写 API Key，会从管理员号池中挑选可用账号生成图片。",
 };
 
 const connectionEndpoints = {
-  proxy: "http://60.205.243.114:3004/v1",
-  local: "http://192.168.10.5:3004/v1",
-  direct: "https://yynewapi.yangyangnj.xin/v1",
-  auto: "自动选择：本地接入 → 中转代理 → 浏览器直连",
+  proxy: modelConnections.proxy?.url || "http://your-server.example.com:3004/v1",
+  local: modelConnections.local?.url || "http://127.0.0.1:3004/v1",
+  direct: modelConnections.direct?.url || "https://your-newapi.example.com/v1",
+  auto: modelConnections.auto?.label || "自动选择",
+  pool: modelConnections.pool?.label || "使用本地号池，无需 API URL",
 };
-
-const modelConfig = window.YY_MODEL_CONFIG || {};
 const modelProfiles = Array.isArray(modelConfig.model_profiles) ? modelConfig.model_profiles : [];
 const modelProfileMap = new Map(modelProfiles.map((item) => [item.id, item]));
 if (modelConfig.connections) {
@@ -633,26 +677,35 @@ function syncSummary() {
 
 function setConnectionMode(mode) {
   els.connectionMode.value = mode;
+  els.connectionMode.setAttribute("value", mode);
   els.connectionButtons.forEach((button) => {
     button.classList.toggle("selected", button.dataset.connectionMode === mode);
   });
   if (connectionEndpoints[mode]) {
     els.apiUrl.value = connectionEndpoints[mode];
   }
-  els.apiUrl.readOnly = mode === "auto";
+  els.apiUrl.readOnly = mode === "auto" || mode === "pool";
+  if (els.apiKey) {
+    els.apiKey.disabled = mode === "pool";
+    els.apiKey.placeholder = mode === "pool" ? "本地号池无需 API Key" : "sk-... 或 New API Token";
+  }
+  if (els.rememberApiKey) {
+    els.rememberApiKey.disabled = mode === "pool";
+  }
+  renderPoolUser();
   syncSummary();
 }
 
 function selectedApiUrl() {
-  return els.connectionMode.value === "auto" ? "" : els.apiUrl.value.trim();
+  return els.connectionMode.value === "auto" || els.connectionMode.value === "pool" ? "" : els.apiUrl.value.trim();
 }
 
 function selectedApiKey() {
-  return els.apiKey.value.trim();
+  return els.connectionMode.value === "pool" ? "" : els.apiKey.value.trim();
 }
 
 function loadApiKeyPreference() {
-  const saved = localStorage.getItem("miku_image_api_key") || "";
+  const saved = localStorage.getItem("yangyang_image_api_key") || "";
   if (saved) {
     els.apiKey.value = saved;
     els.rememberApiKey.checked = true;
@@ -660,10 +713,11 @@ function loadApiKeyPreference() {
 }
 
 function saveApiKeyPreference() {
+  if (els.connectionMode.value === "pool") return;
   if (els.rememberApiKey.checked && selectedApiKey()) {
-    localStorage.setItem("miku_image_api_key", selectedApiKey());
+    localStorage.setItem("yangyang_image_api_key", selectedApiKey());
   } else {
-    localStorage.removeItem("miku_image_api_key");
+    localStorage.removeItem("yangyang_image_api_key");
   }
 }
 
@@ -675,12 +729,84 @@ function setModelStatus(message, tone = "idle") {
   els.modelStatus.classList.toggle("loading", tone === "loading");
 }
 
+function setModelFetchHelp(message = "", tone = "idle") {
+  if (!els.modelFetchHelp) return;
+  els.modelFetchHelp.textContent = message || "API Key 可在 New API 后台的“令牌”里创建或复制；如果浏览器直连读取失败，优先切到“自动”或“中转代理”。";
+  els.modelFetchHelp.classList.toggle("error", tone === "error");
+  els.modelFetchHelp.classList.toggle("success", tone === "success");
+}
+
 function setConnectionStatus(message, tone = "idle") {
   if (!els.connectionStatus) return;
   els.connectionStatus.textContent = message;
   els.connectionStatus.classList.toggle("success", tone === "success");
   els.connectionStatus.classList.toggle("error", tone === "error");
   els.connectionStatus.classList.toggle("loading", tone === "loading");
+}
+
+function activePoolUser() {
+  return state.pool_user || null;
+}
+
+function renderPoolUser() {
+  if (!els.poolLoginPanel) return;
+  const isPoolMode = els.connectionMode?.value === "pool";
+  const user = activePoolUser();
+  els.poolLoginPanel.classList.toggle("hidden", !isPoolMode);
+  if (els.poolUserName) {
+    els.poolUserName.textContent = user ? `${user.display_name || user.username} · 已登录` : "号池用户未登录";
+  }
+  if (els.poolUserHint) {
+    const pool = state.account_pool || {};
+    const okCount = Number(pool.ok || 0);
+    els.poolUserHint.textContent = user
+      ? `当前账号：${user.username}，可用底层账号 ${okCount} 个`
+      : "输入后台创建的号池用户名和密码后，才能使用本地号池生成";
+  }
+  els.poolUsername?.classList.toggle("hidden", Boolean(user));
+  els.poolPassword?.classList.toggle("hidden", Boolean(user));
+  els.poolLoginButton?.classList.toggle("hidden", Boolean(user));
+  els.poolLogoutButton?.classList.toggle("hidden", !user);
+}
+
+async function loginPoolUser() {
+  const username = els.poolUsername?.value.trim() || "";
+  const password = els.poolPassword?.value || "";
+  if (!username) {
+    els.poolUsername?.focus();
+    return;
+  }
+  if (!password) {
+    els.poolPassword?.focus();
+    return;
+  }
+  els.poolLoginButton.disabled = true;
+  try {
+    const data = await api("/api/pool/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+    state.pool_user = data.user || null;
+    if (data.account_pool) state.account_pool = data.account_pool;
+    if (els.poolPassword) els.poolPassword.value = "";
+    renderPoolUser();
+    await refreshModels({ silent: true });
+  } catch (err) {
+    setModelStatus(`号池登录失败：${err.message}`, "error");
+    setConnectionStatus("号池登录失败", "error");
+  } finally {
+    els.poolLoginButton.disabled = false;
+  }
+}
+
+async function logoutPoolUser() {
+  await api("/api/pool/logout", { method: "POST", body: "{}" });
+  state.pool_user = null;
+  renderPoolUser();
+  if (els.connectionMode.value === "pool") {
+    setConnectionStatus("请先登录号池账号", "idle");
+    setModelStatus("请先登录号池账号", "idle");
+  }
 }
 
 function isImageModel(model) {
@@ -1039,7 +1165,7 @@ function renderAgentGenerated() {
   const fields = selectedAgent.fields || {};
   const values = agentPlan.values;
   const variantCards = agentPlan.variants.map((variant) => `
-    <article class="agent-variant-card">
+    <article class="agent-variant-card" data-agent-variant="${escapeAttr(variant.id)}" role="button" tabindex="0">
       <strong>${escapeHtml(variant.title)}</strong>
       <p>${escapeHtml(variant.prompt).replace(/\n/g, "<br>")}</p>
       <button type="button" data-agent-variant="${escapeAttr(variant.id)}">应用到提示词，可继续编辑</button>
@@ -1256,37 +1382,99 @@ function maybeAutoShowGuide(anchor = location.hash || "#home") {
 
 function renderHistory() {
   els.historyList.innerHTML = "";
-  const jobs = state.jobs.slice(0, 20);
+  const jobs = state.jobs;
+  els.historyList.classList.toggle("hidden", !historyExpanded);
+  if (els.toggleHistory) {
+    els.toggleHistory.textContent = historyExpanded ? `任务归档 · ${jobs.length}` : `展开任务归档 · ${jobs.length}`;
+    els.toggleHistory.setAttribute("aria-expanded", String(historyExpanded));
+    els.toggleHistory.classList.toggle("active", historyExpanded);
+  }
+  if (els.clearMedia) {
+    const activeJob = currentHistoryJob();
+    const dayCount = jobsForHistoryDay(selectedHistoryDayKey).length;
+    els.clearMedia.title = activeJob
+      ? "删除当前任务记录"
+      : selectedHistoryDayKey && dayCount
+        ? `删除${historyDayLabel(selectedHistoryDayKey)}的 ${dayCount} 个任务`
+        : "删除所有会话记录";
+    els.clearMedia.classList.toggle("context-active", Boolean(activeJob || (selectedHistoryDayKey && dayCount)));
+  }
+  if (!historyExpanded) {
+    return;
+  }
   if (!jobs.length) {
+    selectedHistoryDayKey = null;
     els.historyList.innerHTML = '<div class="empty-history">暂无记录</div>';
     return;
   }
+  const groups = new Map();
   for (const job of jobs) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `history-item ${job.status} ${selectedHistoryJobId === job.id ? "active" : ""}`;
-    btn.innerHTML = `
-      <strong>${escapeHtml(job.title || job.prompt || "未命名任务")}</strong>
-      <span>${statusText(job.status)} · ${formatTime(job.created_at)}</span>
-    `;
-    btn.addEventListener("click", () => {
-      selectedHistoryJobId = job.id;
+    const key = historyDayKey(job.created_at);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(job);
+  }
+  for (const [key, dayJobs] of groups) {
+    const selectedInGroup = dayJobs.some((job) => job.id === selectedHistoryJobId);
+    if (!historyDayOpen.has(key)) historyDayOpen.set(key, key === historyDayKey(Date.now() / 1000) || selectedInGroup);
+    const group = document.createElement("section");
+    group.className = `history-day-group ${selectedHistoryDayKey === key ? "selected" : ""}`;
+    const header = document.createElement("div");
+    header.className = "history-day-head";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "history-day-toggle";
+    head.setAttribute("aria-expanded", String(historyDayOpen.get(key)));
+    head.innerHTML = `<strong>${escapeHtml(historyDayLabel(key))}</strong><span>${dayJobs.length} 个任务</span>`;
+    head.addEventListener("click", () => {
+      historyDayOpen.set(key, !historyDayOpen.get(key));
+      renderHistory();
+    });
+    const selectDay = document.createElement("button");
+    selectDay.type = "button";
+    selectDay.className = "history-day-select";
+    selectDay.textContent = selectedHistoryDayKey === key ? "已选" : "选择";
+    selectDay.addEventListener("click", () => {
+      selectedHistoryDayKey = selectedHistoryDayKey === key ? null : key;
+      selectedHistoryJobId = null;
       selectedGalleryIds.clear();
-      els.prompt.value = job.prompt || "";
-      els.title.value = job.title || "";
-      els.model.value = job.model || els.model.value;
-      if (job.connection_mode) setConnectionMode(job.connection_mode);
-      if (job.api_url && els.connectionMode.value !== "auto") els.apiUrl.value = job.api_url;
-      if (job.aspect_ratio) els.aspectRatio.value = job.aspect_ratio;
-      if (job.resolution) els.resolution.value = job.resolution;
-      els.count.value = job.count || els.count.value;
-      if (job.quality) els.quality.value = job.quality;
-      if (job.output_format) els.outputFormat.value = job.output_format;
-      els.negative.value = job.negative || "";
-      syncSummary();
       renderState();
     });
-    els.historyList.append(btn);
+    header.append(head, selectDay);
+    group.append(header);
+    if (historyDayOpen.get(key)) {
+      const list = document.createElement("div");
+      list.className = "history-day-list";
+      for (const job of dayJobs) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `history-item ${job.status} ${selectedHistoryJobId === job.id ? "active" : ""}`;
+        btn.innerHTML = `
+          <strong>${escapeHtml(job.title || job.prompt || "未命名任务")}</strong>
+          <span>${statusText(job.status)} · ${historyTimeLabel(job.created_at)}</span>
+        `;
+        btn.addEventListener("click", () => {
+          selectedHistoryJobId = job.id;
+          selectedHistoryDayKey = null;
+          selectedGalleryIds.clear();
+          els.prompt.value = job.prompt || "";
+          els.title.value = job.title || "";
+          els.model.value = job.model || els.model.value;
+          if (job.connection_mode) setConnectionMode(job.connection_mode);
+          if (job.api_url && els.connectionMode.value !== "auto") els.apiUrl.value = job.api_url;
+          if (job.aspect_ratio) els.aspectRatio.value = job.aspect_ratio;
+          if (job.resolution) els.resolution.value = job.resolution;
+          els.count.value = job.count || els.count.value;
+          if (job.quality) els.quality.value = job.quality;
+          if (job.output_format) els.outputFormat.value = job.output_format;
+          els.negative.value = job.negative || "";
+          syncSummary();
+          renderState();
+        });
+        list.append(btn);
+      }
+      group.append(list);
+    }
+    els.historyList.append(group);
   }
 }
 
@@ -1326,6 +1514,7 @@ function galleryItems() {
         title: job.model || "生成失败",
         prompt: job.prompt || "",
         error: job.error || "生成失败",
+        retryCount: job.retry_count || 0,
         index: idx + 1,
         created_at: job.created_at,
         aspect_ratio: job.aspect_ratio || "1:1",
@@ -1347,17 +1536,32 @@ function renderGalleryHeader(items) {
   const queued = state.jobs.filter((job) => job.status === "queued").length;
   const failed = state.jobs.filter((job) => job.status === "error").length;
   const currentJob = currentHistoryJob();
-  const title = currentJob ? `当前任务记录 · 已显示 ${items.length} 条` : `全部生成记录 · 已显示 ${items.length} 条`;
+  const retryableFailed = currentJob ? (currentJob.status === "error" ? 1 : 0) : failed;
+  const title = currentJob ? `当前任务记录 · 已显示 ${items.length} 条` : `最近生成 · 已显示 ${items.length} 条`;
   els.galleryHeader.classList.remove("hidden");
   els.galleryHeader.innerHTML = `
     <div class="gallery-title">
       <strong>${escapeHtml(title)}</strong>
       <span>运行中 ${running} / 排队 ${queued} / 成功 ${state.media.length} / 失败 ${failed}</span>
     </div>
+    ${currentJob && !selectedCount ? `
+      <div class="gallery-bulk-actions muted">
+        <span>正在查看单个任务</span>
+        <button data-gallery-action="show-all" onclick="window.showAllGenerated?.()" type="button">查看全部最近生成</button>
+      </div>
+    ` : ""}
+    ${!selectedCount && retryableFailed ? `
+      <div class="gallery-bulk-actions muted">
+        <span>${currentJob ? "当前任务失败" : `失败任务 ${retryableFailed}`}</span>
+        <button data-gallery-action="retry-failed" class="retry" type="button">重试失败</button>
+        <button data-gallery-action="clear-failed" class="danger" type="button">清除失败</button>
+      </div>
+    ` : ""}
     ${selectedCount ? `
       <div class="gallery-bulk-actions">
         <span>已选 ${selectedCount} / 可选 ${items.length}</span>
         <button data-gallery-action="select-all" type="button">全选已显示</button>
+        <button data-gallery-action="retry-selected" class="retry" type="button">重试选中失败</button>
         <button data-gallery-action="clear-failed" class="danger" type="button">清除失败 ${failed}</button>
         <button data-gallery-action="invert" type="button">反选</button>
         <button data-gallery-action="download" type="button">下载</button>
@@ -1367,6 +1571,13 @@ function renderGalleryHeader(items) {
     ` : ""}
   `;
 }
+
+window.showAllGenerated = function showAllGenerated() {
+  selectedHistoryJobId = null;
+  selectedHistoryDayKey = null;
+  selectedGalleryIds.clear();
+  renderState();
+};
 
 function toggleGalleryItem(itemId) {
   if (selectedGalleryIds.has(itemId)) {
@@ -1380,7 +1591,18 @@ function toggleGalleryItem(itemId) {
 function renderMedia() {
   const items = galleryItems();
   selectedGalleryIds = new Set([...selectedGalleryIds].filter((id) => items.some((item) => item.id === id)));
-  els.mediaCount.textContent = items.length;
+  if (els.mediaCount) {
+    els.mediaCount.textContent = state.media.length;
+  }
+  if (els.showAllMedia) {
+    const filtered = Boolean(currentHistoryJob()) || selectedHistoryJobId === NEW_TASK_DRAFT_ID;
+    els.showAllMedia.classList.toggle("return-all", filtered);
+    els.showAllMedia.setAttribute(
+      "title",
+      filtered ? `当前只显示部分记录，点击显示全部 ${state.media.length} 张` : `已显示全部最近生成 ${state.media.length} 张`
+    );
+    els.showAllMedia.setAttribute("aria-label", filtered ? "显示全部最近生成" : "全部最近生成");
+  }
   els.mediaGrid.innerHTML = "";
   els.emptyState.style.display = items.length ? "none" : "grid";
   const emptyTitle = els.emptyState?.querySelector("strong");
@@ -1408,7 +1630,7 @@ function renderMedia() {
     card.className = `image-card ${item.status} ${selected ? "selected" : ""}`;
     const preview = item.url
       ? `<img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.prompt)}" loading="lazy">`
-      : `<div class="failed-preview"><span>!</span><strong>生成失败</strong><button type="button" data-card-action="details">查看详情</button></div>`;
+      : `<div class="failed-preview"><span>!</span><strong>生成失败</strong><div><button type="button" data-card-action="retry">重试</button><button type="button" data-card-action="details">详情</button></div></div>`;
     card.innerHTML = `
       <button class="image-select" type="button" aria-label="选择生成记录"><span>${selected ? "✓" : ""}</span></button>
       <span class="image-index">#${escapeHtml(item.index || 1)}</span>
@@ -1428,6 +1650,7 @@ function renderMedia() {
         <p>${escapeHtml(item.prompt || "暂无提示词")}</p>
         <div class="image-actions">
           ${item.url ? `<a href="${escapeAttr(item.url)}" target="_blank" rel="noopener">打开</a><a href="${escapeAttr(item.url)}" download>下载</a>` : ""}
+          ${item.status === "error" ? `<button type="button" class="retry" data-card-action="retry">重试</button>` : ""}
           <button type="button" data-card-action="reuse">复用</button>
         </div>
       </div>
@@ -1446,6 +1669,9 @@ function renderMedia() {
     });
     card.querySelector('[data-card-action="details"]')?.addEventListener("click", () => {
       alert(item.error || "生成失败");
+    });
+    card.querySelectorAll('[data-card-action="retry"]').forEach((button) => {
+      button.addEventListener("click", () => retryJobs([item.rawId]));
     });
     els.mediaGrid.append(card);
   }
@@ -1510,11 +1736,15 @@ function renderState() {
     selectedHistoryJobId = null;
     selectedGalleryIds.clear();
   }
+  if (selectedHistoryDayKey && !jobsForHistoryDay(selectedHistoryDayKey).length) {
+    selectedHistoryDayKey = null;
+  }
   renderHistory();
   renderMedia();
   renderReferences();
   renderAvailableModels();
   renderPresetPanel();
+  renderPoolUser();
   syncSummary();
 }
 
@@ -1531,6 +1761,12 @@ async function performSubmitJob(promptOverride = "") {
   const prompt = (promptOverride || els.prompt.value).trim();
   if (!prompt) {
     els.prompt.focus();
+    return;
+  }
+  if (els.connectionMode.value === "pool" && !activePoolUser()) {
+    setConnectionStatus("请先登录号池账号", "error");
+    setModelStatus("请先登录号池账号", "error");
+    els.poolUsername?.focus();
     return;
   }
   saveApiKeyPreference();
@@ -1563,7 +1799,7 @@ async function performSubmitJob(promptOverride = "") {
         edit_mode: els.editMode.checked,
       }),
     });
-    els.prompt.value = "";
+    els.prompt.value = prompt;
     selectedHistoryJobId = created?.job?.id || null;
     selectedGalleryIds.clear();
     closePromptAnalysis();
@@ -1628,6 +1864,29 @@ function submitJob() {
 }
 
 async function refreshModels({ silent = false } = {}) {
+  if (els.connectionMode.value === "pool") {
+    if (!activePoolUser()) {
+      verifiedImageModels = [];
+      replaceModelOptions([]);
+      renderAvailableModels();
+      renderPoolUser();
+      setConnectionStatus("请先登录号池账号", "idle");
+      setModelStatus("请先登录号池账号", "idle");
+      setModelFetchHelp("号池模式不需要 API Key，但需要使用后台创建的号池用户登录。", "idle");
+      if (!silent) els.poolUsername?.focus();
+      return;
+    }
+    const imageModels = Array.isArray(state.models) ? state.models.filter(isImageModel) : modelProfiles.map((item) => item.id).filter(isImageModel);
+    verifiedImageModels = imageModels.length ? imageModels : ["gpt-image-2"];
+    replaceModelOptions(verifiedImageModels);
+    renderAvailableModels();
+    const pool = state.account_pool || {};
+    const okCount = Number(pool.ok || 0);
+    setConnectionStatus(okCount > 0 ? `本地号池可用 ${okCount} 个账号` : "本地号池暂无可用账号", okCount > 0 ? "success" : "error");
+    setModelStatus(`本地号池模式已启用 · ${verifiedImageModels.length} 个生图模型`, okCount > 0 ? "success" : "idle");
+    setModelFetchHelp("本地号池不需要 New API Token；如果要走 New API 线路，可在 New API 后台“令牌”页面创建或复制 API Key。", okCount > 0 ? "success" : "idle");
+    return;
+  }
   const apiKey = selectedApiKey();
   if (!apiKey) {
     verifiedImageModels = [];
@@ -1635,6 +1894,7 @@ async function refreshModels({ silent = false } = {}) {
     renderAvailableModels();
     setModelStatus("ⓘ 填写 API Key 后自动验证", "idle");
     setConnectionStatus("☷ 填写 API Key 后自动验证", "idle");
+    setModelFetchHelp("API Key 可在 New API 后台的“令牌”里创建或复制；填入后会自动读取模型。", "idle");
     return;
   }
   const requestId = ++modelRequestId;
@@ -1663,13 +1923,17 @@ async function refreshModels({ silent = false } = {}) {
     }
     setConnectionStatus("⌁ 已连接", "success");
     setModelStatus(`✓ API Key 有效 · ${imageModels.length} 个生图模型 · ${formatModelTime()}`, "success");
+    setModelFetchHelp(`已连接：${data.api_url || selectedApiUrl() || "自动线路"}。模型 Token 可在 New API 后台“令牌”页面管理。`, "success");
   } catch (err) {
     if (requestId !== modelRequestId) return;
     verifiedImageModels = [];
     replaceModelOptions([]);
     renderAvailableModels();
     setConnectionStatus("☷ 连接失败", "error");
+    const mode = els.connectionMode.value;
+    const directHint = mode === "direct" ? "浏览器直连域名目前只有 IPv6，NAS 或当前网络不支持 IPv6 时会失败；建议切到“自动”或“中转代理”。" : "建议先用“自动”读取；Token 可在 New API 后台“令牌”里创建或复制。";
     setModelStatus(`✕ 读取失败：${err.message}`, "error");
+    setModelFetchHelp(`${directHint} 如果仍失败，检查 New API Token 是否有效、是否有模型权限。`, "error");
     if (!silent) {
       els.apiKey.focus();
     }
@@ -1698,8 +1962,36 @@ async function uploadReference() {
 }
 
 async function clearMedia() {
-  if (!confirm("确认清空任务和媒体库记录？图片文件保留在 data/media。")) return;
+  const activeJob = currentHistoryJob();
+  if (activeJob) {
+    const title = activeJob.title || activeJob.prompt || "未命名任务";
+    if (!confirm(`删除当前任务记录？\n\n${title}\n\n会同时从工作台移除该任务生成的图片记录。`)) return;
+    await api("/api/media/delete", {
+      method: "POST",
+      body: JSON.stringify({ job_ids: [activeJob.id], media_ids: [] }),
+    });
+    selectedHistoryJobId = null;
+    selectedGalleryIds.clear();
+    await loadState();
+    return;
+  }
+  const dayJobs = jobsForHistoryDay(selectedHistoryDayKey);
+  if (selectedHistoryDayKey && dayJobs.length) {
+    const label = historyDayLabel(selectedHistoryDayKey);
+    if (!confirm(`删除${label}的全部任务记录？\n\n共 ${dayJobs.length} 个任务，会同时移除这些任务生成的图片记录。`)) return;
+    await api("/api/media/delete", {
+      method: "POST",
+      body: JSON.stringify({ job_ids: dayJobs.map((job) => job.id), media_ids: [] }),
+    });
+    selectedHistoryDayKey = null;
+    selectedGalleryIds.clear();
+    await loadState();
+    return;
+  }
+  if (!confirm("确认删除所有会话任务和媒体库记录？\n\n图片文件会保留在 data/media。")) return;
   await api("/api/media/clear", { method: "POST", body: "{}" });
+  selectedHistoryJobId = null;
+  selectedHistoryDayKey = null;
   selectedGalleryIds.clear();
   await loadState();
 }
@@ -1726,6 +2018,43 @@ async function clearFailedGallery() {
   await loadState();
 }
 
+async function retryJobs(jobIds = []) {
+  const ids = [...new Set(jobIds.filter(Boolean))];
+  if (!ids.length) return;
+  if (els.connectionMode.value === "pool" && !activePoolUser()) {
+    setConnectionStatus("请先登录号池账号", "error");
+    setModelStatus("请先登录号池账号", "error");
+    els.poolUsername?.focus();
+    return;
+  }
+  saveApiKeyPreference();
+  let lastJobId = null;
+  const errors = [];
+  for (const jobId of ids) {
+    try {
+      const created = await api(`/api/jobs/${encodeURIComponent(jobId)}/retry`, {
+        method: "POST",
+        body: JSON.stringify({
+          api_key: selectedApiKey(),
+          connection_mode: els.connectionMode.value,
+          api_url: selectedApiUrl(),
+          model: els.model.value,
+          retry_limit: Number(els.retryLimit.value || 2),
+        }),
+      });
+      lastJobId = created?.job?.id || lastJobId;
+    } catch (err) {
+      errors.push(`${jobId}: ${err.message}`);
+    }
+  }
+  if (lastJobId) selectedHistoryJobId = lastJobId;
+  selectedGalleryIds.clear();
+  await loadState();
+  if (errors.length) {
+    alert(`部分任务重试失败：\n${errors.join("\n")}`);
+  }
+}
+
 function downloadSelectedGallery() {
   const items = galleryItems().filter((item) => selectedGalleryIds.has(item.id) && item.url);
   for (const item of items) {
@@ -1740,7 +2069,9 @@ function downloadSelectedGallery() {
 
 function handleGalleryAction(action) {
   const items = galleryItems();
-  if (action === "select-all") {
+  if (action === "show-all") {
+    window.showAllGenerated?.();
+  } else if (action === "select-all") {
     selectedGalleryIds = new Set(items.map((item) => item.id));
     renderMedia();
   } else if (action === "invert") {
@@ -1755,6 +2086,18 @@ function handleGalleryAction(action) {
     deleteSelectedGallery();
   } else if (action === "clear-failed") {
     clearFailedGallery();
+  } else if (action === "retry-failed") {
+    const currentJob = currentHistoryJob();
+    const ids = currentJob?.status === "error"
+      ? [currentJob.id]
+      : state.jobs.filter((job) => job.status === "error").map((job) => job.id);
+    retryJobs(ids);
+  } else if (action === "retry-selected") {
+    const ids = [...new Set([...selectedGalleryIds]
+      .filter((id) => id.startsWith("job:"))
+      .map((id) => id.split(":")[1])
+      .filter((id) => state.jobs.some((job) => job.id === id && job.status === "error")))];
+    retryJobs(ids);
   }
 }
 
@@ -2006,15 +2349,34 @@ els.connectionButtons.forEach((button) => button.addEventListener("click", () =>
   scheduleAutoRefreshModels();
 }));
 els.submitJob.addEventListener("click", submitJob);
+els.clearPrompt?.addEventListener("click", () => {
+  els.prompt.value = "";
+  closePromptAnalysis();
+  syncSummary();
+  els.prompt.focus();
+});
 els.referenceUploadButton.addEventListener("click", () => els.referenceUpload.click());
 els.referenceUpload.addEventListener("change", uploadReference);
 els.clearMedia.addEventListener("click", clearMedia);
+els.toggleHistory?.addEventListener("click", () => {
+  historyExpanded = !historyExpanded;
+  renderHistory();
+});
 els.galleryHeader?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-gallery-action]");
   if (button) handleGalleryAction(button.dataset.galleryAction);
 });
+document.addEventListener("click", (event) => {
+  const button = event.target.closest('[data-gallery-action="show-all"]');
+  if (!button || els.galleryHeader?.contains(button)) return;
+  handleGalleryAction("show-all");
+});
+els.showAllMedia?.addEventListener("click", () => {
+  window.showAllGenerated?.();
+});
 els.newTask.addEventListener("click", () => {
   selectedHistoryJobId = NEW_TASK_DRAFT_ID;
+  selectedHistoryDayKey = null;
   selectedGalleryIds.clear();
   els.prompt.value = "";
   els.title.value = "";
@@ -2027,6 +2389,14 @@ els.modelFilter.addEventListener("input", () => renderAvailableModels());
 els.apiKey.addEventListener("input", scheduleAutoRefreshModels);
 els.apiUrl.addEventListener("input", scheduleAutoRefreshModels);
 els.rememberApiKey.addEventListener("change", saveApiKeyPreference);
+els.poolLoginButton?.addEventListener("click", loginPoolUser);
+els.poolLogoutButton?.addEventListener("click", logoutPoolUser);
+els.poolPassword?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loginPoolUser();
+});
+els.poolUsername?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loginPoolUser();
+});
 els.presetButton.addEventListener("click", () => setPresetPanel(els.presetPanel?.classList.contains("hidden")));
 els.closePresetPanel?.addEventListener("click", () => setPresetPanel(false));
 els.quickConfigButton?.addEventListener("click", () => setQuickConfigPanel(els.quickConfigPanel?.classList.contains("hidden")));
@@ -2084,8 +2454,15 @@ els.applyCommercialAgent.addEventListener("click", () => applyAgentVariant("comm
 els.regenerateAgent.addEventListener("click", generateAgentPlan);
 els.disableAgent.addEventListener("click", disableSelectedAgent);
 els.agentWorkspace.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-agent-variant]");
-  if (button) applyAgentVariant(button.dataset.agentVariant);
+  const target = event.target.closest("[data-agent-variant]");
+  if (target) applyAgentVariant(target.dataset.agentVariant);
+});
+els.agentWorkspace.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const target = event.target.closest("[data-agent-variant]");
+  if (!target) return;
+  event.preventDefault();
+  applyAgentVariant(target.dataset.agentVariant);
 });
 els.agentModal.addEventListener("click", (event) => {
   if (event.target === els.agentModal) setAgentPanel(false);

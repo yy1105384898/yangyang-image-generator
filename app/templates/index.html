@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 生图工作台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605120505">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121120">
 </head>
 <body>
   <main id="home" class="home-page">
@@ -219,10 +219,10 @@
         <button id="newTask" class="new-task" type="button">⊞ 新任务</button>
 
         <div class="history-title">
-          <span>最近记录</span>
+          <button id="toggleHistory" class="history-toggle" type="button" aria-expanded="false">最近记录</button>
           <button id="clearMedia" class="icon-button" type="button">⌫</button>
         </div>
-        <div id="historyList" class="history-list"></div>
+        <div id="historyList" class="history-list hidden"></div>
       </aside>
 
       <main class="workspace">
@@ -238,7 +238,7 @@
             <strong id="compatLabel">未选择</strong>
           </div>
           <div class="topbar-cluster right">
-            <button class="status-pill" type="button">▤ <span id="mediaCount">0</span></button>
+            <button class="status-pill media-count-pill" id="showAllMedia" data-gallery-action="show-all" onclick="window.showAllGenerated?.()" type="button" title="显示全部最近生成">▤ <span id="mediaCount">0</span></button>
             <button class="topbar-toggle active" id="toggleConfig" type="button">◨</button>
           </div>
         </header>
@@ -356,6 +356,7 @@
             <textarea id="prompt" rows="1" placeholder="描述你想生成的图片..."></textarea>
             <button id="quickConfigButton" class="quick-config-button" type="button" title="打开生成配置：1张 · 1:1 · 1K · 1024x1024 · PNG · 并发 2">☷ 1张 1:1 1K</button>
             <button id="submitJob" class="send-button" type="button">➤</button>
+            <button id="clearPrompt" class="clear-prompt-button" type="button" title="清空提示词" aria-label="清空提示词">×</button>
           </div>
           <section class="quick-config-panel hidden" id="quickConfigPanel" aria-live="polite">
             <header>
@@ -419,19 +420,20 @@
             <small id="protocolSupport">支持参考图 · 支持质量 · 支持格式</small>
           </div>
           <div class="connection-mode-group">
-            <button class="selected" data-connection-mode="proxy" type="button"><strong>中转代理</strong><span>最稳</span></button>
+            <button class="selected" data-connection-mode="auto" type="button"><strong>自动</strong><span>兜底</span></button>
+            <button data-connection-mode="proxy" type="button"><strong>中转代理</strong><span>最稳</span></button>
             <button data-connection-mode="local" type="button"><strong>本地接入</strong><span>NAS</span></button>
             <button data-connection-mode="direct" type="button"><strong>浏览器直连</strong><span>少一跳</span></button>
-            <button data-connection-mode="auto" type="button"><strong>自动</strong><span>兜底</span></button>
+            <button data-connection-mode="pool" type="button"><strong>本地号池</strong><span>OAuth</span></button>
           </div>
-          <input id="connectionMode" value="proxy" hidden>
+          <input id="connectionMode" value="auto" hidden>
           <div id="connectionNote" class="endpoint-note">请求先到本站 /api，再转发到上游，能避开浏览器跨域问题。</div>
         </section>
 
         <section class="settings-section api-card">
           <label>
             <span>API URL</span>
-            <input id="apiUrl" value="http://60.205.243.114:3004/v1">
+            <input id="apiUrl" value="{{ model_config.connections.proxy.url }}">
           </label>
           <div class="endpoint-note">按上方接入模式自动切换，也可以手动改成其他 OpenAI 兼容地址。</div>
           <label>
@@ -442,6 +444,19 @@
             <input id="rememberApiKey" type="checkbox">
             <span>记住 API Key</span>
           </label>
+          <div id="poolLoginPanel" class="pool-login-panel hidden">
+            <div class="pool-login-status">
+              <span>本地号池</span>
+              <strong id="poolUserName">号池用户未登录</strong>
+              <small id="poolUserHint">登录后可使用管理员配置的 OpenAI OAuth 号池</small>
+            </div>
+            <div class="pool-login-form">
+              <input id="poolUsername" placeholder="号池用户名" autocomplete="username">
+              <input id="poolPassword" type="password" placeholder="号池密码" autocomplete="current-password">
+              <button id="poolLoginButton" class="primary-action" type="button">登录号池</button>
+              <button id="poolLogoutButton" class="subtle-button hidden" type="button">退出号池</button>
+            </div>
+          </div>
           <label class="hidden-model-select">
             <span>模型</span>
             <select id="model">
@@ -452,6 +467,9 @@
           </label>
           <button id="refreshModels" class="primary-action" type="button">↻ 读取/刷新模型</button>
           <div id="modelStatus" class="status-line">ⓘ 填写 API Key 后点击读取/刷新模型</div>
+          <div id="modelFetchHelp" class="endpoint-note model-fetch-help">
+            API Key 可在 New API 后台的“令牌”里创建或复制；如果浏览器直连读取失败，优先切到“自动”或“中转代理”。
+          </div>
           <section class="analysis-card">
             <strong>智能分析 AI</strong>
             <select id="analysisModel" disabled>
@@ -604,6 +622,6 @@
   <script>
     window.YY_MODEL_CONFIG = {{ model_config|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=202605120205"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=202605121120"></script>
 </body>
 </html>

@@ -1,18 +1,23 @@
 import base64
+import hashlib
 import json
 import mimetypes
 import os
 import queue
+import random
+import re
 import struct
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin
 
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 try:
@@ -25,10 +30,16 @@ APP_USERNAME = os.getenv("APP_USERNAME", "root")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "root")
 NEW_API_BASE = os.getenv("NEW_API_BASE", "http://127.0.0.1:3004").rstrip("/")
 NEW_API_TOKEN = os.getenv("NEW_API_TOKEN", "")
+
+
+def env_endpoint(name: str, default: str) -> str:
+    return os.getenv(f"CONNECTION_{name.upper()}_URL", default).strip().rstrip("/")
+
+
 CONNECTION_ENDPOINTS = {
-    "local": "http://192.168.10.5:3004/v1",
-    "proxy": "http://60.205.243.114:3004/v1",
-    "direct": "https://yynewapi.yangyangnj.xin/v1",
+    "local": env_endpoint("local", "http://127.0.0.1:3004/v1"),
+    "proxy": env_endpoint("proxy", "http://your-server.example.com:3004/v1"),
+    "direct": env_endpoint("direct", "https://your-newapi.example.com/v1"),
 }
 AUTO_CONNECTION_ORDER = ("local", "proxy", "direct")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-image-2")
@@ -45,6 +56,7 @@ PRESETS_FILE = DATA_DIR / "presets.json"
 REFERENCES_FILE = DATA_DIR / "references.json"
 MODEL_CONFIG_FILE = DATA_DIR / "model_config.json"
 ACCOUNT_POOL_FILE = DATA_DIR / "account_pool.json"
+POOL_USERS_FILE = DATA_DIR / "pool_users.json"
 INTEGRATION_CONFIG_FILE = DATA_DIR / "integration_config.json"
 ADMIN_LOGS_FILE = DATA_DIR / "admin_logs.json"
 ADMIN_AUTH_FILE = DATA_DIR / "admin_auth.json"
@@ -85,7 +97,7 @@ def write_json(path: Path, value) -> None:
 def default_model_config() -> dict:
     model_ids = AVAILABLE_MODELS or [DEFAULT_MODEL]
     return {
-        "default_connection_mode": "proxy",
+        "default_connection_mode": "auto",
         "auto_order": ["local", "proxy", "direct"],
         "connections": {
             "local": {
@@ -114,6 +126,13 @@ def default_model_config() -> dict:
                 "badge": "兜底",
                 "url": "",
                 "description": "按本地接入、中转代理、浏览器直连依次尝试，哪个能连上就用哪个。",
+                "enabled": True,
+            },
+            "pool": {
+                "label": "本地号池",
+                "badge": "OAuth",
+                "url": "",
+                "description": "不填写 API Key，直接使用管理员号池里已导入并可用的 OpenAI OAuth 账号生成图片。",
                 "enabled": True,
             },
         },
@@ -186,6 +205,94 @@ def write_admin_auth(username: str, password: str) -> None:
     username = str(username or "").strip() or "root"
     password = str(password or "").strip() or "root"
     write_json(ADMIN_AUTH_FILE, {"username": username, "password": password, "updated_at": now_ts()})
+
+
+def normalize_pool_user(item: dict) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    username = str(item.get("username") or "").strip()
+    if not username:
+        return None
+    password_hash = str(item.get("password_hash") or "").strip()
+    raw_password = str(item.get("password") or "").strip()
+    if not password_hash and raw_password:
+        password_hash = generate_password_hash(raw_password)
+    return {
+        "id": str(item.get("id") or uuid.uuid4().hex),
+        "username": username,
+        "display_name": str(item.get("display_name") or username).strip() or username,
+        "password_hash": password_hash,
+        "enabled": bool(item.get("enabled", True)),
+        "note": str(item.get("note") or "").strip(),
+        "created_at": int(item.get("created_at") or now_ts()),
+        "updated_at": int(item.get("updated_at") or now_ts()),
+        "last_login_at": int(item.get("last_login_at") or 0),
+    }
+
+
+def read_pool_users() -> list[dict]:
+    items = read_json(POOL_USERS_FILE, [])
+    users = [user for item in items if (user := normalize_pool_user(item))]
+    return sorted(users, key=lambda item: item.get("created_at", 0))
+
+
+def write_pool_users(users: list[dict]) -> None:
+    unique = {}
+    for item in users:
+        user = normalize_pool_user(item)
+        if user:
+            unique[user["username"].lower()] = user
+    write_json(POOL_USERS_FILE, list(unique.values()))
+
+
+def public_pool_user(user: dict | None) -> dict | None:
+    if not user:
+        return None
+    return {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "display_name": user.get("display_name") or user.get("username"),
+        "enabled": bool(user.get("enabled", True)),
+        "last_login_at": int(user.get("last_login_at") or 0),
+    }
+
+
+def pool_user_stats(users: list[dict]) -> dict:
+    return {
+        "total": len(users),
+        "enabled": sum(1 for item in users if item.get("enabled", True)),
+        "disabled": sum(1 for item in users if not item.get("enabled", True)),
+    }
+
+
+def verify_pool_user_password(user: dict, password: str) -> bool:
+    password = str(password or "")
+    password_hash = str(user.get("password_hash") or "")
+    if password_hash:
+        try:
+            return check_password_hash(password_hash, password)
+        except ValueError:
+            return False
+    legacy_password = str(user.get("password") or "")
+    return bool(legacy_password) and legacy_password == password
+
+
+def current_pool_user() -> dict | None:
+    user_id = str(session.get("pool_user_id") or "")
+    if not user_id:
+        return None
+    for user in read_pool_users():
+        if user.get("id") == user_id and user.get("enabled", True):
+            return user
+    session.pop("pool_user_id", None)
+    return None
+
+
+def require_pool_user_json():
+    user = current_pool_user()
+    if user:
+        return user, None
+    return None, (jsonify({"error": "请先登录号池账号"}), 401)
 
 
 def connection_endpoints() -> dict[str, str]:
@@ -387,13 +494,13 @@ def extract_access_token_from_remote(item: dict) -> str:
     return ""
 
 
-def sync_sub2api_accounts(conf: dict) -> list[dict]:
+def list_sub2api_remote_accounts(conf: dict) -> list[dict]:
     base_url = str(conf.get("base_url") or "").strip().rstrip("/")
     if not base_url:
         raise RuntimeError("请先填写 Sub2API 地址")
     headers = sub2api_headers(conf)
     group_id = str(conf.get("group_id") or "").strip()
-    synced = []
+    accounts = []
     page = 1
     while True:
         params = {"platform": "openai", "type": "oauth", "page": page, "page_size": 200}
@@ -408,35 +515,71 @@ def sync_sub2api_accounts(conf: dict) -> list[dict]:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            token = extract_access_token_from_remote(item)
-            detail = item
-            account_id = str(item.get("id") or "").strip()
-            if not token and account_id:
-                detail_resp = requests.get(f"{base_url}/api/v1/admin/accounts/{account_id}", headers=headers, timeout=30)
-                if detail_resp.ok:
-                    detail_body = unwrap_remote_payload(detail_resp.json())
-                    detail = detail_body if isinstance(detail_body, dict) else item
-                    token = extract_access_token_from_remote(detail)
-            if not token:
+            credentials = item.get("credentials") if isinstance(item.get("credentials"), dict) else {}
+            account_id = str(item.get("id") or credentials.get("chatgpt_account_id") or "").strip()
+            if not account_id:
                 continue
-            credentials = detail.get("credentials") if isinstance(detail.get("credentials"), dict) else {}
-            account = normalize_account({
-                "access_token": token,
-                "email": credentials.get("email") or detail.get("email") or detail.get("name"),
-                "type": credentials.get("plan_type") or detail.get("type") or "openai-oauth",
-                "status": "正常" if str(detail.get("status") or "").lower() not in {"disabled", "error"} else "异常",
-                "source": "sub2api",
-                "note": f"Sub2API: {conf.get('name') or base_url}",
+            accounts.append({
+                "id": account_id,
+                "name": str(item.get("name") or "").strip(),
+                "email": str(credentials.get("email") or item.get("email") or item.get("name") or "").strip(),
+                "plan_type": str(credentials.get("plan_type") or item.get("type") or "").strip(),
+                "status": str(item.get("status") or "").strip(),
+                "expires_at": str(credentials.get("expires_at") or "").strip(),
+                "has_refresh_token": bool(str(credentials.get("refresh_token") or "").strip()),
             })
-            if account:
-                synced.append(account)
         if page * 200 >= total or len(items) < 200:
             break
         page += 1
-    return synced
+    return accounts
 
 
-def sync_cpa_accounts(conf: dict) -> list[dict]:
+def fetch_sub2api_account_token(conf: dict, account_id: str) -> dict:
+    base_url = str(conf.get("base_url") or "").strip().rstrip("/")
+    headers = sub2api_headers(conf)
+    resp = requests.get(f"{base_url}/api/v1/admin/accounts/{account_id}", headers=headers, timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"{account_id}: HTTP {resp.status_code} {resp.text[:160]}")
+    detail_body = unwrap_remote_payload(resp.json())
+    detail = detail_body if isinstance(detail_body, dict) else {}
+    token = extract_access_token_from_remote(detail)
+    if not token:
+        raise RuntimeError(f"{account_id}: missing access_token")
+    credentials = detail.get("credentials") if isinstance(detail.get("credentials"), dict) else {}
+    account = normalize_account({
+        "access_token": token,
+        "email": credentials.get("email") or detail.get("email") or detail.get("name"),
+        "type": credentials.get("plan_type") or detail.get("type") or "openai-oauth",
+        "status": "正常" if str(detail.get("status") or "").lower() not in {"disabled", "error"} else "异常",
+        "source": "sub2api",
+        "note": f"Sub2API: {conf.get('name') or base_url}",
+    })
+    if not account:
+        raise RuntimeError(f"{account_id}: normalize failed")
+    return account
+
+
+def import_sub2api_accounts(conf: dict, account_ids: list[str]) -> tuple[list[dict], list[dict]]:
+    ids = list(dict.fromkeys(str(item or "").strip() for item in account_ids if str(item or "").strip()))
+    imported = []
+    errors = []
+    for account_id in ids:
+        try:
+            imported.append(fetch_sub2api_account_token(conf, account_id))
+        except Exception as exc:
+            errors.append({"name": account_id, "error": str(exc)})
+    return imported, errors
+
+
+def sync_sub2api_accounts(conf: dict) -> list[dict]:
+    remote_accounts = list_sub2api_remote_accounts(conf)
+    imported, errors = import_sub2api_accounts(conf, [item["id"] for item in remote_accounts])
+    if errors and not imported:
+        raise RuntimeError(f"Sub2API 同步失败：{errors[0]['error']}")
+    return imported
+
+
+def list_cpa_remote_files(conf: dict) -> list[dict]:
     base_url = str(conf.get("base_url") or "").strip().rstrip("/")
     secret_key = str(conf.get("secret_key") or "").strip()
     if not base_url or not secret_key:
@@ -446,13 +589,29 @@ def sync_cpa_accounts(conf: dict) -> list[dict]:
     if not resp.ok:
         raise RuntimeError(f"读取 CPA 文件失败：HTTP {resp.status_code} {resp.text[:160]}")
     files, _ = paged_items(resp.json())
-    synced = []
+    result = []
     for item in files:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
         if not name:
             continue
+        result.append({
+            "name": name,
+            "email": str(item.get("email") or item.get("account") or "").strip(),
+        })
+    return result
+
+
+def import_cpa_files(conf: dict, file_names: list[str]) -> tuple[list[dict], list[dict]]:
+    base_url = str(conf.get("base_url") or "").strip().rstrip("/")
+    secret_key = str(conf.get("secret_key") or "").strip()
+    if not base_url or not secret_key:
+        raise RuntimeError("请先填写 CPA 地址和 Secret Key")
+    headers = {"Authorization": f"Bearer {secret_key}", "Accept": "application/json"}
+    synced = []
+    errors = []
+    for name in list(dict.fromkeys(str(item or "").strip() for item in file_names if str(item or "").strip())):
         detail_resp = requests.get(
             f"{base_url}/v0/management/auth-files/download",
             headers=headers,
@@ -460,21 +619,33 @@ def sync_cpa_accounts(conf: dict) -> list[dict]:
             timeout=30,
         )
         if not detail_resp.ok:
+            errors.append({"name": name, "error": f"HTTP {detail_resp.status_code}"})
             continue
-        payload = detail_resp.json()
-        token = extract_access_token_from_remote(payload)
-        if not token:
-            continue
-        account = normalize_account({
-            "access_token": token,
-            "email": payload.get("email") or item.get("email") or item.get("account"),
-            "type": payload.get("plan_type") or "openai-oauth",
-            "source": "cpa",
-            "status": "正常",
-            "note": f"CPA: {name}",
-        })
-        if account:
-            synced.append(account)
+        try:
+            payload = detail_resp.json()
+            token = extract_access_token_from_remote(payload)
+            if not token:
+                raise RuntimeError("missing access_token")
+            account = normalize_account({
+                "access_token": token,
+                "email": payload.get("email") or payload.get("account"),
+                "type": payload.get("plan_type") or "openai-oauth",
+                "source": "cpa",
+                "status": "正常",
+                "note": f"CPA: {name}",
+            })
+            if account:
+                synced.append(account)
+        except Exception as exc:
+            errors.append({"name": name, "error": str(exc)})
+    return synced, errors
+
+
+def sync_cpa_accounts(conf: dict) -> list[dict]:
+    files = list_cpa_remote_files(conf)
+    synced, errors = import_cpa_files(conf, [item["name"] for item in files])
+    if errors and not synced:
+        raise RuntimeError(f"CPA 同步失败：{errors[0]['error']}")
     return synced
 
 
@@ -615,6 +786,599 @@ def refresh_account_pool(target_tokens: list[str] | None = None) -> dict:
         next_accounts.append(item)
     write_account_pool(next_accounts)
     return {"refreshed": refreshed, "errors": errors, "items": read_account_pool()}
+
+
+def is_pool_account_available(account: dict) -> bool:
+    status = str(account.get("status") or "正常").strip()
+    if status in {"禁用", "限流", "异常"}:
+        return False
+    if bool(account.get("image_quota_unknown")):
+        return True
+    return int(account.get("quota") or 0) > 0
+
+
+def pool_available_accounts() -> list[dict]:
+    return [item for item in read_account_pool() if is_pool_account_available(item)]
+
+
+def pick_pool_account() -> dict:
+    accounts = pool_available_accounts()
+    if not accounts:
+        raise RuntimeError("本地号池没有可用账号，请先在管理员里导入账号、刷新额度或启用账号")
+    accounts.sort(key=lambda item: (int(item.get("fail") or 0), -int(item.get("success") or 0), int(item.get("updated_at") or 0)))
+    return accounts[0]
+
+
+def mark_pool_account_result(access_token: str, success: bool, error: str = "") -> None:
+    token = str(access_token or "").strip()
+    if not token:
+        return
+    with state_lock:
+        accounts = read_account_pool()
+        next_accounts = []
+        for item in accounts:
+            if item.get("access_token") != token:
+                next_accounts.append(item)
+                continue
+            if success:
+                item["success"] = int(item.get("success") or 0) + 1
+                item["last_error"] = ""
+                if not item.get("image_quota_unknown"):
+                    item["quota"] = max(0, int(item.get("quota") or 0) - 1)
+                    if item["quota"] == 0:
+                        item["status"] = "限流"
+                    else:
+                        item["status"] = "正常"
+                else:
+                    item["status"] = "正常"
+            else:
+                item["fail"] = int(item.get("fail") or 0) + 1
+                item["last_error"] = str(error or "生成失败")[:500]
+                lowered = item["last_error"].lower()
+                if "401" in lowered or "invalid access token" in lowered or "access_token" in lowered:
+                    item["status"] = "异常"
+            item["updated_at"] = now_ts()
+            next_accounts.append(item)
+        write_account_pool(next_accounts)
+
+
+class PowScriptParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.script_sources: list[str] = []
+        self.data_build = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "script":
+            return
+        attrs_dict = dict(attrs)
+        src = attrs_dict.get("src")
+        if not src:
+            return
+        self.script_sources.append(src)
+        match = re.search(r"c/[^/]*/_", src)
+        if match:
+            self.data_build = match.group(0)
+
+
+def parse_pow_resources(html: str) -> tuple[list[str], str]:
+    parser = PowScriptParser()
+    parser.feed(html or "")
+    data_build = parser.data_build
+    if not data_build:
+        match = re.search(r'<html[^>]*data-build="([^"]*)"', html or "")
+        if match:
+            data_build = match.group(1)
+    return parser.script_sources or ["https://chatgpt.com/backend-api/sentinel/sdk.js"], data_build
+
+
+def build_pow_config(user_agent: str, script_sources: list[str], data_build: str) -> list:
+    script_source = random.choice(script_sources or ["https://chatgpt.com/backend-api/sentinel/sdk.js"])
+    return [
+        random.choice([3000, 4000, 5000]),
+        time.strftime("%a %b %d %Y %H:%M:%S GMT-0500 (Eastern Standard Time)", time.gmtime(time.time() - 5 * 3600)),
+        4294705152,
+        0,
+        user_agent,
+        script_source,
+        data_build,
+        "en-US",
+        "en-US,en",
+        0,
+        random.choice(["webdriver∭false", "language∭zh-CN", "hardwareConcurrency∭12"]),
+        "location",
+        random.choice(["window", "document", "navigator", "performance"]),
+        time.perf_counter() * 1000,
+        str(uuid.uuid4()),
+        "",
+        random.choice([8, 16, 24, 32]),
+        time.time() * 1000 - (time.perf_counter() * 1000),
+    ]
+
+
+def pow_generate(seed: str, difficulty: str, config: list, limit: int = 500000) -> tuple[str, bool]:
+    target = bytes.fromhex(difficulty)
+    diff_len = len(difficulty) // 2
+    seed_bytes = seed.encode()
+    static_1 = (json.dumps(config[:3], separators=(",", ":"), ensure_ascii=False)[:-1] + ",").encode()
+    static_2 = ("," + json.dumps(config[4:9], separators=(",", ":"), ensure_ascii=False)[1:-1] + ",").encode()
+    static_3 = ("," + json.dumps(config[10:], separators=(",", ":"), ensure_ascii=False)[1:]).encode()
+    for i in range(limit):
+        final_json = static_1 + str(i).encode() + static_2 + str(i >> 1).encode() + static_3
+        encoded = base64.b64encode(final_json)
+        digest = hashlib.sha3_512(seed_bytes + encoded).digest()
+        if digest[:diff_len] <= target:
+            return encoded.decode(), True
+    fallback = "wQ8Lk5FbGpA2NcR9dShT6gYjU7VxZ4D" + base64.b64encode(f'"{seed}"'.encode()).decode()
+    return fallback, False
+
+
+def build_legacy_requirements_token(user_agent: str, script_sources: list[str], data_build: str) -> str:
+    seed = format(random.random())
+    answer, _ = pow_generate(seed, "0fffff", build_pow_config(user_agent, script_sources, data_build))
+    return "gAAAAAC" + answer
+
+
+def build_proof_token(seed: str, difficulty: str, user_agent: str, script_sources: list[str], data_build: str) -> str:
+    answer, solved = pow_generate(seed, difficulty, build_pow_config(user_agent, script_sources, data_build))
+    if not solved:
+        raise RuntimeError(f"failed to solve proof token: difficulty={difficulty}")
+    return "gAAAAAB" + answer
+
+
+def response_ok(resp) -> bool:
+    return 200 <= int(getattr(resp, "status_code", 0) or 0) < 300
+
+
+def ensure_response_ok(resp, context: str) -> None:
+    if response_ok(resp):
+        return
+    body = getattr(resp, "text", "")
+    try:
+        body = resp.json()
+    except Exception:
+        pass
+    raise RuntimeError(f"{context} failed: HTTP {resp.status_code} {str(body)[:500]}")
+
+
+def iter_sse_payloads(resp):
+    for raw_line in resp.iter_lines():
+        if not raw_line:
+            continue
+        line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload:
+            yield payload
+
+
+def unique_extend(values: list[str], candidates: list[str]) -> None:
+    for item in candidates:
+        if item and item not in values:
+            values.append(item)
+
+
+def extract_pool_image_ids(text: str) -> tuple[list[str], list[str]]:
+    file_ids = re.findall(r"(file[-_][A-Za-z0-9_-]+)", text or "")
+    sediment_ids = re.findall(r"sediment://([A-Za-z0-9_-]+)", text or "")
+    return file_ids, sediment_ids
+
+
+def build_pool_image_prompt(prompt: str, ratio: str) -> str:
+    ratio = str(ratio or "").strip()
+    hints = {
+        "1:1": "输出 1:1 正方形构图。",
+        "16:9": "输出 16:9 横屏构图。",
+        "9:16": "输出 9:16 竖屏构图。",
+        "4:3": "输出 4:3 横向构图。",
+        "3:4": "输出 3:4 纵向构图。",
+        "4:5": "输出 4:5 竖向构图。",
+        "5:4": "输出 5:4 横向构图。",
+        "2:3": "输出 2:3 竖向构图。",
+        "3:2": "输出 3:2 横向构图。",
+    }
+    hint = hints.get(ratio)
+    return f"{prompt.strip()}\n\n{hint}" if hint else prompt.strip()
+
+
+class ChatGptImageClient:
+    def __init__(self, access_token: str) -> None:
+        self.base_url = "https://chatgpt.com"
+        self.access_token = access_token
+        self.user_agent = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+        )
+        self.device_id = str(uuid.uuid4())
+        self.session_id = str(uuid.uuid4())
+        self.pow_script_sources: list[str] = []
+        self.pow_data_build = ""
+        self.session = browser_requests.Session(impersonate="edge101", verify=True) if browser_requests else requests.Session()
+        self.session.headers.update({
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": self.user_agent,
+            "Origin": self.base_url,
+            "Referer": self.base_url + "/",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "OAI-Device-Id": self.device_id,
+            "OAI-Session-Id": self.session_id,
+            "OAI-Language": "zh-CN",
+            "Sec-Ch-Ua": '"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+        })
+
+    def headers(self, path: str, extra: dict | None = None) -> dict:
+        headers = dict(self.session.headers)
+        headers["X-OpenAI-Target-Path"] = path
+        headers["X-OpenAI-Target-Route"] = path
+        if extra:
+            headers.update(extra)
+        return headers
+
+    def bootstrap(self) -> None:
+        resp = self.session.get(
+            self.base_url + "/",
+            headers={
+                "User-Agent": self.user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            },
+            timeout=30,
+        )
+        ensure_response_ok(resp, "chatgpt bootstrap")
+        self.pow_script_sources, self.pow_data_build = parse_pow_resources(resp.text)
+
+    def chat_requirements(self) -> dict:
+        path = "/backend-api/sentinel/chat-requirements"
+        body = {"p": build_legacy_requirements_token(self.user_agent, self.pow_script_sources, self.pow_data_build)}
+        resp = self.session.post(
+            self.base_url + path,
+            headers=self.headers(path, {"Content-Type": "application/json", "Accept": "application/json"}),
+            json=body,
+            timeout=30,
+        )
+        ensure_response_ok(resp, "chat requirements")
+        data = resp.json()
+        proof_token = ""
+        proof = data.get("proofofwork") or {}
+        if proof.get("required"):
+            proof_token = build_proof_token(
+                str(proof.get("seed") or ""),
+                str(proof.get("difficulty") or ""),
+                self.user_agent,
+                self.pow_script_sources,
+                self.pow_data_build,
+            )
+        if (data.get("arkose") or {}).get("required") or (data.get("turnstile") or {}).get("required"):
+            raise RuntimeError("ChatGPT 要求额外人机验证，当前号池账号暂时不能直连生成")
+        token = str(data.get("token") or "")
+        if not token:
+            raise RuntimeError("ChatGPT 没有返回 chat requirements token")
+        return {"token": token, "proof_token": proof_token}
+
+    @staticmethod
+    def image_model_slug(model: str) -> str:
+        model = str(model or "").strip()
+        if model == "gpt-image-2":
+            return "gpt-5-3"
+        if model == "codex-gpt-image-2":
+            return model
+        return "auto"
+
+    def image_headers(self, path: str, requirements: dict, conduit_token: str = "", accept: str = "*/*") -> dict:
+        extra = {
+            "Content-Type": "application/json",
+            "Accept": accept,
+            "OpenAI-Sentinel-Chat-Requirements-Token": requirements["token"],
+        }
+        if requirements.get("proof_token"):
+            extra["OpenAI-Sentinel-Proof-Token"] = requirements["proof_token"]
+        if conduit_token:
+            extra["X-Conduit-Token"] = conduit_token
+        if accept == "text/event-stream":
+            extra["X-Oai-Turn-Trace-Id"] = str(uuid.uuid4())
+        return self.headers(path, extra)
+
+    def prepare_image_conversation(self, prompt: str, requirements: dict, model: str) -> str:
+        path = "/backend-api/f/conversation/prepare"
+        payload = {
+            "action": "next",
+            "fork_from_shared_post": False,
+            "parent_message_id": str(uuid.uuid4()),
+            "model": self.image_model_slug(model),
+            "client_prepare_state": "success",
+            "timezone_offset_min": -480,
+            "timezone": "Asia/Shanghai",
+            "conversation_mode": {"kind": "primary_assistant"},
+            "system_hints": ["picture_v2"],
+            "partial_query": {
+                "id": str(uuid.uuid4()),
+                "author": {"role": "user"},
+                "content": {"content_type": "text", "parts": [prompt]},
+            },
+            "supports_buffering": True,
+            "supported_encodings": ["v1"],
+            "client_contextual_info": {"app_name": "chatgpt.com"},
+        }
+        resp = self.session.post(self.base_url + path, headers=self.image_headers(path, requirements), json=payload, timeout=60)
+        ensure_response_ok(resp, "image prepare")
+        return str(resp.json().get("conduit_token") or "")
+
+    def upload_reference(self, path: Path, mime: str) -> dict:
+        data = path.read_bytes()
+        width, height = image_dimensions(path)
+        width, height = width or 1024, height or 1024
+        api_path = "/backend-api/files"
+        resp = self.session.post(
+            self.base_url + api_path,
+            headers=self.headers(api_path, {"Content-Type": "application/json", "Accept": "application/json"}),
+            json={"file_name": path.name, "file_size": len(data), "use_case": "multimodal", "width": width, "height": height},
+            timeout=60,
+        )
+        ensure_response_ok(resp, "reference create")
+        meta = resp.json()
+        upload_url = meta.get("upload_url")
+        file_id = meta.get("file_id")
+        if not upload_url or not file_id:
+            raise RuntimeError("参考图上传地址缺失")
+        put_resp = self.session.put(
+            upload_url,
+            headers={
+                "Content-Type": mime or "image/png",
+                "x-ms-blob-type": "BlockBlob",
+                "x-ms-version": "2020-04-08",
+                "Origin": self.base_url,
+                "Referer": self.base_url + "/",
+                "User-Agent": self.user_agent,
+            },
+            data=data,
+            timeout=120,
+        )
+        ensure_response_ok(put_resp, "reference upload")
+        done_path = f"/backend-api/files/{file_id}/uploaded"
+        done_resp = self.session.post(
+            self.base_url + done_path,
+            headers=self.headers(done_path, {"Content-Type": "application/json", "Accept": "application/json"}),
+            data="{}",
+            timeout=60,
+        )
+        ensure_response_ok(done_resp, "reference uploaded")
+        return {
+            "file_id": file_id,
+            "file_name": path.name,
+            "file_size": len(data),
+            "mime_type": mime or "image/png",
+            "width": width,
+            "height": height,
+        }
+
+    def start_image_generation(self, prompt: str, requirements: dict, conduit_token: str, model: str, references: list[dict]):
+        parts = [{
+            "content_type": "image_asset_pointer",
+            "asset_pointer": f"file-service://{item['file_id']}",
+            "width": item["width"],
+            "height": item["height"],
+            "size_bytes": item["file_size"],
+        } for item in references]
+        parts.append(prompt)
+        content = {"content_type": "multimodal_text", "parts": parts} if references else {"content_type": "text", "parts": [prompt]}
+        metadata = {
+            "developer_mode_connector_ids": [],
+            "selected_github_repos": [],
+            "selected_all_github_repos": False,
+            "system_hints": ["picture_v2"],
+            "serialization_metadata": {"custom_symbol_offsets": []},
+        }
+        if references:
+            metadata["attachments"] = [{
+                "id": item["file_id"],
+                "mimeType": item["mime_type"],
+                "name": item["file_name"],
+                "size": item["file_size"],
+                "width": item["width"],
+                "height": item["height"],
+            } for item in references]
+        payload = {
+            "action": "next",
+            "messages": [{
+                "id": str(uuid.uuid4()),
+                "author": {"role": "user"},
+                "create_time": time.time(),
+                "content": content,
+                "metadata": metadata,
+            }],
+            "parent_message_id": str(uuid.uuid4()),
+            "model": self.image_model_slug(model),
+            "client_prepare_state": "sent",
+            "timezone_offset_min": -480,
+            "timezone": "Asia/Shanghai",
+            "conversation_mode": {"kind": "primary_assistant"},
+            "enable_message_followups": True,
+            "system_hints": ["picture_v2"],
+            "supports_buffering": True,
+            "supported_encodings": ["v1"],
+            "client_contextual_info": {
+                "is_dark_mode": False,
+                "time_since_loaded": 1200,
+                "page_height": 1072,
+                "page_width": 1724,
+                "pixel_ratio": 1.2,
+                "screen_height": 1440,
+                "screen_width": 2560,
+                "app_name": "chatgpt.com",
+            },
+            "paragen_cot_summary_display_override": "allow",
+            "force_parallel_switch": "auto",
+        }
+        path = "/backend-api/f/conversation"
+        resp = self.session.post(
+            self.base_url + path,
+            headers=self.image_headers(path, requirements, conduit_token, "text/event-stream"),
+            json=payload,
+            timeout=300,
+            stream=True,
+        )
+        ensure_response_ok(resp, "image conversation")
+        return resp
+
+    def get_conversation(self, conversation_id: str) -> dict:
+        path = f"/backend-api/conversation/{conversation_id}"
+        resp = self.session.get(self.base_url + path, headers=self.headers(path, {"Accept": "application/json"}), timeout=60)
+        ensure_response_ok(resp, "conversation detail")
+        return resp.json()
+
+    @staticmethod
+    def extract_image_records(conversation: dict) -> tuple[list[str], list[str]]:
+        file_ids: list[str] = []
+        sediment_ids: list[str] = []
+        for node in (conversation.get("mapping") or {}).values():
+            message = (node or {}).get("message") or {}
+            author = message.get("author") or {}
+            metadata = message.get("metadata") or {}
+            if author.get("role") != "tool" or metadata.get("async_task_type") != "image_gen":
+                continue
+            content = message.get("content") or {}
+            for part in content.get("parts") or []:
+                text = json.dumps(part, ensure_ascii=False) if isinstance(part, dict) else str(part or "")
+                file_hits, sediment_hits = extract_pool_image_ids(text)
+                unique_extend(file_ids, file_hits)
+                unique_extend(sediment_ids, sediment_hits)
+        return file_ids, sediment_ids
+
+    def poll_image_ids(self, conversation_id: str, timeout_secs: int = 120) -> tuple[list[str], list[str]]:
+        start = time.time()
+        while time.time() - start < timeout_secs:
+            file_ids, sediment_ids = self.extract_image_records(self.get_conversation(conversation_id))
+            if file_ids or sediment_ids:
+                return file_ids, sediment_ids
+            time.sleep(4)
+        return [], []
+
+    def download_url_for_file(self, file_id: str) -> str:
+        path = f"/backend-api/files/{file_id}/download"
+        resp = self.session.get(self.base_url + path, headers=self.headers(path, {"Accept": "application/json"}), timeout=60)
+        ensure_response_ok(resp, "file download url")
+        body = resp.json()
+        return str(body.get("download_url") or body.get("url") or "")
+
+    def download_url_for_attachment(self, conversation_id: str, attachment_id: str) -> str:
+        path = f"/backend-api/conversation/{conversation_id}/attachment/{attachment_id}/download"
+        resp = self.session.get(self.base_url + path, headers=self.headers(path, {"Accept": "application/json"}), timeout=60)
+        ensure_response_ok(resp, "attachment download url")
+        body = resp.json()
+        return str(body.get("download_url") or body.get("url") or "")
+
+    def resolve_image_urls(self, conversation_id: str, file_ids: list[str], sediment_ids: list[str]) -> list[str]:
+        urls: list[str] = []
+        for file_id in [item for item in file_ids if item != "file_upload"]:
+            try:
+                url = self.download_url_for_file(file_id)
+            except Exception:
+                url = ""
+            if url:
+                urls.append(url)
+        if urls:
+            return urls
+        for sediment_id in sediment_ids:
+            try:
+                url = self.download_url_for_attachment(conversation_id, sediment_id)
+            except Exception:
+                url = ""
+            if url:
+                urls.append(url)
+        return urls
+
+    def download_images(self, urls: list[str]) -> list[bytes]:
+        images = []
+        for url in urls:
+            resp = self.session.get(url, timeout=120)
+            ensure_response_ok(resp, "image download")
+            images.append(resp.content)
+        return images
+
+    def generate(self, prompt: str, model: str, ratio: str, references: list[dict]) -> list[dict]:
+        final_prompt = build_pool_image_prompt(prompt, ratio)
+        uploaded = []
+        for ref in references[:4]:
+            filename = str(ref.get("url") or "").split("/references/", 1)[-1]
+            path = REFERENCE_DIR / filename
+            if path.exists():
+                uploaded.append(self.upload_reference(path, ref.get("mime") or "image/png"))
+        self.bootstrap()
+        requirements = self.chat_requirements()
+        conduit_token = self.prepare_image_conversation(final_prompt, requirements, model)
+        resp = self.start_image_generation(final_prompt, requirements, conduit_token, model, uploaded)
+        conversation_id = ""
+        file_ids: list[str] = []
+        sediment_ids: list[str] = []
+        message = ""
+        blocked = False
+        tool_invoked = None
+        try:
+            for payload in iter_sse_payloads(resp):
+                if payload == "[DONE]":
+                    break
+                unique_extend(file_ids, extract_pool_image_ids(payload)[0])
+                unique_extend(sediment_ids, extract_pool_image_ids(payload)[1])
+                try:
+                    event = json.loads(payload)
+                except Exception:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                conversation_id = str(event.get("conversation_id") or conversation_id)
+                value = event.get("v")
+                if isinstance(value, dict):
+                    conversation_id = str(value.get("conversation_id") or conversation_id)
+                    raw_message = value.get("message")
+                else:
+                    raw_message = event.get("message")
+                if isinstance(raw_message, dict):
+                    content = raw_message.get("content") or {}
+                    parts = content.get("parts") or []
+                    text_parts = [str(part) for part in parts if isinstance(part, str)]
+                    if text_parts and (raw_message.get("author") or {}).get("role") == "assistant":
+                        message = "".join(text_parts)
+                if event.get("type") == "moderation":
+                    moderation = event.get("moderation_response") or {}
+                    blocked = blocked or bool(isinstance(moderation, dict) and moderation.get("blocked") is True)
+                if event.get("type") == "server_ste_metadata":
+                    metadata = event.get("metadata") or {}
+                    if isinstance(metadata, dict) and isinstance(metadata.get("tool_invoked"), bool):
+                        tool_invoked = metadata["tool_invoked"]
+        finally:
+            resp.close()
+        if conversation_id and not file_ids and not sediment_ids:
+            polled_file_ids, polled_sediment_ids = self.poll_image_ids(conversation_id)
+            unique_extend(file_ids, polled_file_ids)
+            unique_extend(sediment_ids, polled_sediment_ids)
+        urls = self.resolve_image_urls(conversation_id, file_ids, sediment_ids)
+        images = self.download_images(urls)
+        if not images:
+            if message and (blocked or tool_invoked is False):
+                raise RuntimeError(message)
+            raise RuntimeError(message or "号池生成没有返回图片")
+        return [{"b64_json": base64.b64encode(item).decode("ascii")} for item in images]
+
+
+def generate_one_with_pool(job: dict, prompt: str, index: int) -> list[dict]:
+    account = pick_pool_account()
+    token = account["access_token"]
+    try:
+        reference_ids = job.get("reference_ids") or []
+        references = [r for r in read_references() if r.get("id") in reference_ids]
+        client = ChatGptImageClient(token)
+        data = client.generate(prompt, job.get("model") or DEFAULT_MODEL, job.get("aspect_ratio") or "1:1", references)
+        mark_pool_account_result(token, True)
+        update_job(job["id"], {"usage": {"source": "local_account_pool"}, "revised_prompt": prompt})
+        return [save_image_payload(job["id"], index + i, normalize_image(item), prompt) for i, item in enumerate(data)]
+    except Exception as exc:
+        mark_pool_account_result(token, False, str(exc))
+        raise
 
 
 def read_jobs():
@@ -890,6 +1654,8 @@ def resolve_api_url(connection_mode: str, api_url: str, api_key: str) -> tuple[s
 
 
 def generate_one(job: dict, prompt: str, index: int) -> list[dict]:
+    if str(job.get("connection_mode") or "").strip() == "pool":
+        return generate_one_with_pool(job, prompt, index)
     headers = {"Authorization": bearer_token(str(job.get("api_key") or ""))}
     api_base = job_api_base(job)
     reference_ids = job.get("reference_ids") or []
@@ -969,9 +1735,29 @@ def run_job(job_id: str) -> None:
                 prompts.append(f"{base_prompt}\n画面分镜：{variant}")
         else:
             prompts = [base_prompt for _ in range(count)]
+        retry_limit = max(0, min(int(job.get("retry_limit") or 0), 5))
         for idx, prompt in enumerate(prompts):
-            update_job(job_id, {"progress": {"done": idx, "total": len(prompts), "message": f"生成第 {idx + 1}/{len(prompts)} 张"}})
-            created_media.extend(generate_one(job, prompt, idx))
+            last_error = ""
+            for attempt in range(retry_limit + 1):
+                attempt_text = f" · 重试 {attempt}/{retry_limit}" if attempt else ""
+                update_job(job_id, {
+                    "progress": {
+                        "done": idx,
+                        "total": len(prompts),
+                        "message": f"生成第 {idx + 1}/{len(prompts)} 张{attempt_text}",
+                    },
+                    "last_attempt": attempt + 1,
+                })
+                try:
+                    created_media.extend(generate_one(job, prompt, idx))
+                    last_error = ""
+                    break
+                except Exception as exc:
+                    last_error = str(exc)
+                    update_job(job_id, {"error": last_error})
+                    if attempt >= retry_limit:
+                        raise
+                    time.sleep(min(10, 1.6 * (attempt + 1)))
             with state_lock:
                 media = read_media()
                 media.extend(created_media)
@@ -1060,9 +1846,13 @@ def admin():
         return auth
     saved = False
     message = ""
+    sub2api_remote_accounts = []
+    cpa_remote_files = []
+    sync_errors = []
     if request.method == "POST":
         action = request.form.get("action", "save_model_config")
         accounts = read_account_pool()
+        pool_users = read_pool_users()
         if action == "save_admin_auth":
             username = request.form.get("admin_username", "").strip()
             password = request.form.get("admin_password", "").strip()
@@ -1070,6 +1860,72 @@ def admin():
             session["user"] = username or "root"
             admin_log("修改管理员账号")
             message = "管理员账号密码已保存。"
+            saved = True
+        elif action == "add_pool_user":
+            username = request.form.get("pool_username", "").strip()
+            password = request.form.get("pool_password", "").strip()
+            display_name = request.form.get("pool_display_name", "").strip()
+            note = request.form.get("pool_note", "").strip()
+            if not username or not password:
+                message = "号池登录用户和密码不能为空。"
+            elif any(item.get("username", "").lower() == username.lower() for item in pool_users):
+                message = "号池登录用户已存在。"
+            else:
+                user = normalize_pool_user({
+                    "username": username,
+                    "password": password,
+                    "display_name": display_name or username,
+                    "note": note,
+                    "enabled": True,
+                    "created_at": now_ts(),
+                    "updated_at": now_ts(),
+                })
+                if user:
+                    write_pool_users(pool_users + [user])
+                    admin_log("创建号池登录用户", {"username": username})
+                    message = "号池登录用户已创建。"
+            saved = True
+        elif action == "update_pool_user":
+            target = request.form.get("target_pool_user_id", "").strip()
+            username = request.form.get("pool_username", "").strip()
+            password = request.form.get("pool_password", "").strip()
+            display_name = request.form.get("pool_display_name", "").strip()
+            note = request.form.get("pool_note", "").strip()
+            enabled = request.form.get("pool_enabled") == "on"
+            if not target:
+                message = "没有选择要更新的号池登录用户。"
+            elif not username:
+                message = "号池登录用户名不能为空。"
+            elif any(item.get("id") != target and item.get("username", "").lower() == username.lower() for item in pool_users):
+                message = "号池登录用户已存在。"
+            else:
+                updated = []
+                for item in pool_users:
+                    if item.get("id") == target:
+                        item = {
+                            **item,
+                            "username": username,
+                            "display_name": display_name or username,
+                            "note": note,
+                            "enabled": enabled,
+                            "updated_at": now_ts(),
+                        }
+                        if password:
+                            item["password_hash"] = generate_password_hash(password)
+                    updated.append(item)
+                write_pool_users(updated)
+                if session.get("pool_user_id") == target and not enabled:
+                    session.pop("pool_user_id", None)
+                admin_log("更新号池登录用户", {"username": username, "enabled": enabled})
+                message = "号池登录用户已更新。"
+            saved = True
+        elif action == "delete_pool_user":
+            target = request.form.get("target_pool_user_id", "").strip()
+            write_pool_users([item for item in pool_users if item.get("id") != target])
+            if session.get("pool_user_id") == target:
+                session.pop("pool_user_id", None)
+            admin_log("删除号池登录用户", {"id": target})
+            message = "号池登录用户已删除。"
             saved = True
         elif action == "save_model_config":
             current = read_model_config()
@@ -1164,6 +2020,77 @@ def admin():
             admin_log("刷新全部账号信息和额度", {"errors": len(result["errors"])})
             message = f"已刷新 {result['refreshed']} 个账号，失败 {len(result['errors'])} 个。"
             saved = True
+        elif action in {"save_sub2api_config", "browse_sub2api_accounts", "import_sub2api_selected"}:
+            current = read_integration_config()
+            next_integrations = {
+                **current,
+                "sub2api": {
+                    "name": request.form.get("sub2api_name", ""),
+                    "base_url": request.form.get("sub2api_base_url", ""),
+                    "username": request.form.get("sub2api_username", ""),
+                    "password": request.form.get("sub2api_password", ""),
+                    "api_key": request.form.get("sub2api_api_key", ""),
+                    "group_id": request.form.get("sub2api_group_id", ""),
+                },
+            }
+            write_integration_config(next_integrations)
+            conf = read_integration_config()["sub2api"]
+            if action == "save_sub2api_config":
+                admin_log("保存 Sub2API 连接")
+                message = "Sub2API 连接已保存。"
+            elif action == "browse_sub2api_accounts":
+                try:
+                    sub2api_remote_accounts = list_sub2api_remote_accounts(conf)
+                    admin_log("读取 Sub2API 远端账号", {"count": len(sub2api_remote_accounts), "base_url": conf.get("base_url")})
+                    message = f"已读取 Sub2API 远端账号 {len(sub2api_remote_accounts)} 个，请勾选后导入。"
+                except Exception as exc:
+                    admin_log("读取 Sub2API 远端账号失败", {"error": str(exc)})
+                    message = f"读取 Sub2API 失败：{exc}"
+            elif action == "import_sub2api_selected":
+                selected_ids = request.form.getlist("sub2api_account_id")
+                imported, sync_errors = import_sub2api_accounts(conf, selected_ids)
+                write_account_pool(accounts + imported)
+                admin_log("导入 Sub2API 账号", {"count": len(imported), "failed": len(sync_errors)})
+                message = f"已从 Sub2API 导入 {len(imported)} 个账号，失败 {len(sync_errors)} 个。"
+                try:
+                    sub2api_remote_accounts = list_sub2api_remote_accounts(conf)
+                except Exception:
+                    sub2api_remote_accounts = []
+            saved = True
+        elif action in {"save_cpa_config", "browse_cpa_files", "import_cpa_selected"}:
+            current = read_integration_config()
+            next_integrations = {
+                **current,
+                "cpa": {
+                    "name": request.form.get("cpa_name", ""),
+                    "base_url": request.form.get("cpa_base_url", ""),
+                    "secret_key": request.form.get("cpa_secret_key", ""),
+                },
+            }
+            write_integration_config(next_integrations)
+            conf = read_integration_config()["cpa"]
+            if action == "save_cpa_config":
+                admin_log("保存 CPA 连接")
+                message = "CPA 连接已保存。"
+            elif action == "browse_cpa_files":
+                try:
+                    cpa_remote_files = list_cpa_remote_files(conf)
+                    admin_log("读取 CPA 远端文件", {"count": len(cpa_remote_files), "base_url": conf.get("base_url")})
+                    message = f"已读取 CPA 远端文件 {len(cpa_remote_files)} 个，请勾选后导入。"
+                except Exception as exc:
+                    admin_log("读取 CPA 远端文件失败", {"error": str(exc)})
+                    message = f"读取 CPA 失败：{exc}"
+            elif action == "import_cpa_selected":
+                selected_files = request.form.getlist("cpa_file_name")
+                imported, sync_errors = import_cpa_files(conf, selected_files)
+                write_account_pool(accounts + imported)
+                admin_log("导入 CPA 账号", {"count": len(imported), "failed": len(sync_errors)})
+                message = f"已从 CPA 导入 {len(imported)} 个账号，失败 {len(sync_errors)} 个。"
+                try:
+                    cpa_remote_files = list_cpa_remote_files(conf)
+                except Exception:
+                    cpa_remote_files = []
+            saved = True
         elif action == "save_integrations":
             next_integrations = {
                 "sub2api": {
@@ -1228,6 +2155,7 @@ def admin():
         for item in config.get("model_profiles", [])
     )
     accounts = read_account_pool()
+    pool_users = read_pool_users()
     media_items = sorted(read_media(), key=lambda x: x.get("created_at", 0), reverse=True)
     jobs = sorted(read_jobs(), key=lambda x: x.get("created_at", 0), reverse=True)
     logs = sorted(read_json(ADMIN_LOGS_FILE, []), key=lambda x: x.get("created_at", 0), reverse=True)
@@ -1240,10 +2168,15 @@ def admin():
         admin_auth=read_admin_auth(),
         accounts=accounts,
         account_stats=account_stats(accounts),
+        pool_users=pool_users,
+        pool_user_stats=pool_user_stats(pool_users),
         integrations=read_integration_config(),
         media_items=media_items,
         jobs=jobs[:80],
         logs=logs[:120],
+        sub2api_remote_accounts=sub2api_remote_accounts,
+        cpa_remote_files=cpa_remote_files,
+        sync_errors=sync_errors,
     )
 
 
@@ -1255,6 +2188,47 @@ def media_file(filename):
 @app.get("/api/health")
 def health():
     return jsonify({"ok": True, "models": available_model_ids(), "new_api_base": NEW_API_BASE, "model_config": read_model_config()})
+
+
+@app.get("/api/pool/session")
+def pool_session():
+    auth = login_required_json()
+    if auth:
+        return auth
+    return jsonify({"user": public_pool_user(current_pool_user()), "account_pool": account_stats(read_account_pool())})
+
+
+@app.post("/api/pool/login")
+def pool_login():
+    auth = login_required_json()
+    if auth:
+        return auth
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    for user in read_pool_users():
+        if user.get("username", "").lower() != username.lower():
+            continue
+        if not user.get("enabled", True):
+            return jsonify({"error": "该号池用户已停用"}), 403
+        if not verify_pool_user_password(user, password):
+            break
+        user["last_login_at"] = now_ts()
+        user["updated_at"] = now_ts()
+        write_pool_users([item if item.get("id") != user.get("id") else user for item in read_pool_users()])
+        session["pool_user_id"] = user["id"]
+        admin_log("号池用户登录", {"username": user["username"]})
+        return jsonify({"user": public_pool_user(user), "account_pool": account_stats(read_account_pool())})
+    return jsonify({"error": "号池用户名或密码错误"}), 401
+
+
+@app.post("/api/pool/logout")
+def pool_logout():
+    auth = login_required_json()
+    if auth:
+        return auth
+    session.pop("pool_user_id", None)
+    return jsonify({"ok": True, "user": None})
 
 
 @app.get("/api/state")
@@ -1271,6 +2245,9 @@ def state():
         "models": available_model_ids(),
         "default_model": DEFAULT_MODEL,
         "model_config": read_model_config(),
+        "account_pool": account_stats(read_account_pool()),
+        "pool_user": public_pool_user(current_pool_user()),
+        "pool_users": pool_user_stats(read_pool_users()),
     })
 
 
@@ -1282,7 +2259,20 @@ def models():
     payload = request.get_json(silent=True) or {}
     api_key = str(payload.get("api_key") or "").strip()
     connection_mode = str(payload.get("connection_mode") or "proxy").strip()
+    pool_user = None
     api_url = str(payload.get("api_url") or "").strip()
+    if connection_mode == "pool":
+        pool_user, pool_error = require_pool_user_json()
+        if pool_error:
+            return pool_error
+        stats = account_stats(read_account_pool())
+        return jsonify({
+            "ok": True,
+            "models": available_model_ids(),
+            "api_url": "local-account-pool",
+            "account_pool": stats,
+            "pool_user": public_pool_user(pool_user),
+        })
     errors = []
     for candidate in candidate_api_urls(connection_mode, api_url):
         try:
@@ -1303,13 +2293,23 @@ def create_job():
     if not prompt:
         return jsonify({"error": "请输入提示词"}), 400
     api_key = str(payload.get("api_key") or "").strip()
-    if not (api_key or NEW_API_TOKEN):
-        return jsonify({"error": "请先填写 API Key"}), 400
     mode = str(payload.get("mode") or "single")
     count = max(1, min(int(payload.get("count") or 1), 20))
     connection_mode = str(payload.get("connection_mode") or "proxy").strip()
+    pool_user = None
+    if connection_mode != "pool" and not (api_key or NEW_API_TOKEN):
+        return jsonify({"error": "请先填写 API Key"}), 400
+    if connection_mode == "pool":
+        pool_user, pool_error = require_pool_user_json()
+        if pool_error:
+            return pool_error
+    if connection_mode == "pool" and not pool_available_accounts():
+        return jsonify({"error": "本地号池没有可用账号，请先到管理员号池导入账号并刷新额度"}), 400
     api_url = str(payload.get("api_url") or "").strip()
-    resolved_api_url, resolve_errors = resolve_api_url(connection_mode, api_url, api_key)
+    if connection_mode == "pool":
+        resolved_api_url, resolve_errors = "local-account-pool", []
+    else:
+        resolved_api_url, resolve_errors = resolve_api_url(connection_mode, api_url, api_key)
     job = {
         "id": uuid.uuid4().hex,
         "mode": mode,
@@ -1319,6 +2319,9 @@ def create_job():
         "resolved_api_url": resolved_api_url,
         "api_key": api_key,
         "connection_errors": resolve_errors,
+        "pool_user_id": pool_user.get("id") if pool_user else "",
+        "pool_username": pool_user.get("username") if pool_user else "",
+        "pool_display_name": pool_user.get("display_name") if pool_user else "",
         "title": str(payload.get("title") or "").strip() or prompt[:36],
         "prompt": prompt,
         "style": str(payload.get("style") or "").strip(),
@@ -1344,6 +2347,81 @@ def create_job():
         "created_at": now_ts(),
         "updated_at": now_ts(),
     }
+    with state_lock:
+        jobs = read_jobs()
+        jobs.append(job)
+        write_jobs(jobs)
+    job_queue.put(job["id"])
+    return jsonify({"job": job})
+
+
+@app.post("/api/jobs/<job_id>/retry")
+def retry_job(job_id):
+    auth = login_required_json()
+    if auth:
+        return auth
+    source = get_job(job_id)
+    if not source:
+        return jsonify({"error": "任务不存在"}), 404
+    payload = request.get_json(silent=True) or {}
+    api_key = str(payload.get("api_key") or source.get("api_key") or "").strip()
+    connection_mode = str(payload.get("connection_mode") or source.get("connection_mode") or "proxy").strip()
+    pool_user = None
+    if connection_mode != "pool" and not (api_key or NEW_API_TOKEN):
+        return jsonify({"error": "请先填写 API Key"}), 400
+    if connection_mode == "pool":
+        pool_user, pool_error = require_pool_user_json()
+        if pool_error:
+            return pool_error
+    if connection_mode == "pool" and not pool_available_accounts():
+        return jsonify({"error": "本地号池没有可用账号，请先到管理员号池导入账号并刷新额度"}), 400
+    api_url = str(payload.get("api_url") or source.get("api_url") or "").strip()
+    if connection_mode == "pool":
+        resolved_api_url, resolve_errors = "local-account-pool", []
+    else:
+        resolved_api_url, resolve_errors = resolve_api_url(connection_mode, api_url, api_key)
+    retry_count = int(source.get("retry_count") or 0) + 1
+    job = {
+        "id": uuid.uuid4().hex,
+        "mode": str(source.get("mode") or "single"),
+        "protocol": str(source.get("protocol") or "custom-openai").strip(),
+        "connection_mode": connection_mode,
+        "api_url": api_url.rstrip("/") if api_url else resolved_api_url,
+        "resolved_api_url": resolved_api_url,
+        "api_key": api_key,
+        "connection_errors": resolve_errors,
+        "pool_user_id": pool_user.get("id") if pool_user else "",
+        "pool_username": pool_user.get("username") if pool_user else "",
+        "pool_display_name": pool_user.get("display_name") if pool_user else "",
+        "title": f"重试 {retry_count} · {str(source.get('title') or source.get('prompt') or '未命名任务')[:32]}",
+        "prompt": str(source.get("prompt") or "").strip(),
+        "style": str(source.get("style") or "").strip(),
+        "negative": str(source.get("negative") or "").strip(),
+        "subject_id": str(source.get("subject_id") or "").strip(),
+        "model": str(payload.get("model") or source.get("model") or DEFAULT_MODEL).strip(),
+        "aspect_ratio": str(source.get("aspect_ratio") or "1:1").strip(),
+        "resolution": str(source.get("resolution") or "1K").strip(),
+        "size": str(source.get("size") or "1024x1024").strip(),
+        "quality": str(source.get("quality") or "auto").strip(),
+        "output_format": str(source.get("output_format") or "png").strip(),
+        "count": max(1, min(int(source.get("count") or 1), 20)),
+        "concurrency": max(1, min(int(source.get("concurrency") or 2), 6)),
+        "retry_limit": max(0, min(int(payload.get("retry_limit") or source.get("retry_limit") or 2), 5)),
+        "seed": str(source.get("seed") or "").strip(),
+        "variants": [str(v).strip() for v in source.get("variants", []) if str(v).strip()],
+        "reference_ids": [str(v).strip() for v in source.get("reference_ids", []) if str(v).strip()][:4],
+        "edit_mode": bool(source.get("edit_mode")),
+        "retry_of": job_id,
+        "retry_count": retry_count,
+        "status": "queued",
+        "progress": {"done": 0, "total": max(1, min(int(source.get("count") or 1), 20)), "message": "重试排队中"},
+        "media_ids": [],
+        "error": "",
+        "created_at": now_ts(),
+        "updated_at": now_ts(),
+    }
+    if not job["prompt"]:
+        return jsonify({"error": "原任务提示词为空，无法重试"}), 400
     with state_lock:
         jobs = read_jobs()
         jobs.append(job)
@@ -1459,7 +2537,7 @@ def delete_media_items():
     media_ids = {str(item) for item in payload.get("media_ids", [])}
     job_ids = {str(item) for item in payload.get("job_ids", [])}
     with state_lock:
-        write_media([item for item in read_media() if item.get("id") not in media_ids])
+        write_media([item for item in read_media() if item.get("id") not in media_ids and item.get("job_id") not in job_ids])
         write_jobs([job for job in read_jobs() if job.get("id") not in job_ids])
     return jsonify({"ok": True})
 

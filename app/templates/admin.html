@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 管理后台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605120420">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121120">
 </head>
 <body class="admin-page">
   <header class="admin-topbar">
@@ -68,6 +68,52 @@
         <span><b>{{ account_stats.error }}</b>异常账户</span>
         <span><b>{{ account_stats.disabled }}</b>禁用账户</span>
         <span><b>{{ account_stats.quota }}</b>剩余额度</span>
+      </div>
+
+      <div class="admin-management-grid pool-user-management">
+        <form method="post" class="admin-mini-form">
+          <h3>创建工作台号池用户</h3>
+          <p class="admin-help-text">给工作台使用者分配独立的号池用户名和密码。用户登录后才能使用“本地号池”模式，底层仍由本页 token 号池自动分配。</p>
+          <div class="admin-inline-fields">
+            <label>用户名<input name="pool_username" required autocomplete="off" placeholder="例如 yangyang"></label>
+            <label>显示名称<input name="pool_display_name" placeholder="例如 杨杨用户"></label>
+          </div>
+          <label>登录密码<input name="pool_password" required type="password" autocomplete="new-password" placeholder="工作台号池密码"></label>
+          <label>备注<input name="pool_note" placeholder="用途、人员或权限说明"></label>
+          <button class="admin-primary-button" type="submit" name="action" value="add_pool_user">创建号池用户</button>
+        </form>
+
+        <section class="admin-mini-form pool-user-list">
+          <h3>工作台号池用户</h3>
+          <div class="admin-stat-grid compact">
+            <span><b>{{ pool_user_stats.total }}</b>用户总数</span>
+            <span><b>{{ pool_user_stats.enabled }}</b>启用</span>
+            <span><b>{{ pool_user_stats.disabled }}</b>停用</span>
+          </div>
+          {% for user in pool_users %}
+            <form method="post" class="pool-user-row">
+              <input type="hidden" name="target_pool_user_id" value="{{ user.id }}">
+              <label>用户名<input name="pool_username" value="{{ user.username }}" autocomplete="off"></label>
+              <label>显示名称<input name="pool_display_name" value="{{ user.display_name }}"></label>
+              <label>重置密码<input name="pool_password" type="password" autocomplete="new-password" placeholder="不填则不修改"></label>
+              <label>备注<input name="pool_note" value="{{ user.note }}"></label>
+              <label class="admin-switch-row">
+                <span>启用</span>
+                <span class="admin-switch"><input type="checkbox" name="pool_enabled" {% if user.enabled %}checked{% endif %}><span></span></span>
+              </label>
+              <div class="pool-user-meta">
+                <small>创建：{{ user.created_at|ctime }}</small>
+                <small>最近登录：{{ user.last_login_at|ctime if user.last_login_at else "未登录" }}</small>
+              </div>
+              <div class="admin-form-actions">
+                <button class="admin-primary-button" type="submit" name="action" value="update_pool_user">保存用户</button>
+                <button class="admin-danger-button" type="submit" name="action" value="delete_pool_user">删除用户</button>
+              </div>
+            </form>
+          {% else %}
+            <div class="admin-empty">暂无工作台号池用户。创建后，工作台可以用该用户名和密码登录本地号池。</div>
+          {% endfor %}
+        </section>
       </div>
 
       <div class="admin-management-grid">
@@ -222,47 +268,152 @@
       </div>
     </section>
 
+    <section class="admin-card admin-section admin-tab-panel" id="sub2api" data-admin-panel="settings">
+      <div class="admin-card-head">
+        <div>
+          <span class="admin-kicker">Sub2API Connections</span>
+          <h2>Sub2API 同步</h2>
+          <p>参考 chatgpt2api 流程：保存连接，读取 OpenAI OAuth 账号，勾选账号后后台拉取 access_token 导入本地号池。</p>
+        </div>
+      </div>
+      <form method="post" class="admin-config-form">
+        <div class="admin-management-grid">
+          <section class="admin-mini-form">
+            <h3>连接信息</h3>
+            <div class="admin-inline-fields">
+              <label>连接名称<input name="sub2api_name" value="{{ integrations.sub2api.name }}" placeholder="本地 sub2api"></label>
+              <label>服务地址<input name="sub2api_base_url" value="{{ integrations.sub2api.base_url }}" placeholder="http://host:port"></label>
+            </div>
+            <div class="admin-inline-fields">
+              <label>管理员邮箱<input name="sub2api_username" value="{{ integrations.sub2api.username }}" placeholder="admin@example.com"></label>
+              <label>管理员密码<input name="sub2api_password" type="password" value="{{ integrations.sub2api.password }}"></label>
+            </div>
+            <div class="admin-inline-fields">
+              <label>Admin API Key<input name="sub2api_api_key" value="{{ integrations.sub2api.api_key }}" placeholder="有 API Key 可不填邮箱密码"></label>
+              <label>分组 ID<input name="sub2api_group_id" value="{{ integrations.sub2api.group_id }}" placeholder="可选"></label>
+            </div>
+            <div class="admin-form-actions">
+              <button class="admin-primary-button" type="submit" name="action" value="save_sub2api_config">保存连接</button>
+              <button type="submit" name="action" value="browse_sub2api_accounts">读取远端账号</button>
+            </div>
+          </section>
+          <section class="admin-mini-form">
+            <h3>同步说明</h3>
+            <p class="admin-help-text">读取列表时只展示账号摘要；点击导入后，后端才会逐个读取账号详情里的 access_token，并写入本地号池。</p>
+            <p class="admin-help-text">支持两种认证：管理员邮箱密码登录，或直接使用 Sub2API Admin API Key。</p>
+            <p class="admin-help-text">导入后可回到“号池管理”刷新邮箱、套餐和生图额度。</p>
+          </section>
+        </div>
+
+        <div class="admin-table-wrap">
+          <table class="admin-table admin-sync-table">
+            <thead>
+              <tr>
+                <th><input type="checkbox" data-check-all="sub2api_account_id"></th>
+                <th>账号 ID</th>
+                <th>邮箱</th>
+                <th>套餐</th>
+                <th>状态</th>
+                <th>Refresh Token</th>
+                <th>过期时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for account in sub2api_remote_accounts %}
+                <tr>
+                  <td><input type="checkbox" name="sub2api_account_id" value="{{ account.id }}"></td>
+                  <td><b>{{ account.name or account.id }}</b><small>{{ account.id }}</small></td>
+                  <td>{{ account.email or "-" }}</td>
+                  <td>{{ account.plan_type or "-" }}</td>
+                  <td>{{ account.status or "-" }}</td>
+                  <td>{{ "有" if account.has_refresh_token else "无" }}</td>
+                  <td>{{ account.expires_at or "-" }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="7" class="admin-empty">还没有读取远端账号。先填写连接信息，然后点击“读取远端账号”。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="admin-form-actions">
+          <button class="admin-primary-button" type="submit" name="action" value="import_sub2api_selected">导入选中账号</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="admin-card admin-section admin-tab-panel" id="cpa" data-admin-panel="settings">
+      <div class="admin-card-head">
+        <div>
+          <span class="admin-kicker">CLIProxyAPI Pools</span>
+          <h2>CPA 同步</h2>
+          <p>参考 chatgpt2api 流程：保存 CPA 连接，读取远程 auth-files，勾选文件后后台下载 access_token 导入本地号池。</p>
+        </div>
+      </div>
+      <form method="post" class="admin-config-form">
+        <div class="admin-management-grid">
+          <section class="admin-mini-form">
+            <h3>连接信息</h3>
+            <div class="admin-inline-fields">
+              <label>连接名称<input name="cpa_name" value="{{ integrations.cpa.name }}" placeholder="CPA 账号池"></label>
+              <label>服务地址<input name="cpa_base_url" value="{{ integrations.cpa.base_url }}" placeholder="http://host:port"></label>
+            </div>
+            <label>Secret Key<input name="cpa_secret_key" type="password" value="{{ integrations.cpa.secret_key }}"></label>
+            <div class="admin-form-actions">
+              <button class="admin-primary-button" type="submit" name="action" value="save_cpa_config">保存连接</button>
+              <button type="submit" name="action" value="browse_cpa_files">读取远端文件</button>
+            </div>
+          </section>
+          <section class="admin-mini-form">
+            <h3>同步说明</h3>
+            <p class="admin-help-text">CPA 列表接口：<code>/v0/management/auth-files</code>。</p>
+            <p class="admin-help-text">导入时下载接口：<code>/v0/management/auth-files/download?name=...</code>。</p>
+            <p class="admin-help-text">前端只负责选择文件，access_token 下载和导入都由后端完成。</p>
+          </section>
+        </div>
+
+        <div class="admin-table-wrap">
+          <table class="admin-table admin-sync-table">
+            <thead>
+              <tr>
+                <th><input type="checkbox" data-check-all="cpa_file_name"></th>
+                <th>文件名</th>
+                <th>账号信息</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for file in cpa_remote_files %}
+                <tr>
+                  <td><input type="checkbox" name="cpa_file_name" value="{{ file.name }}"></td>
+                  <td><b>{{ file.name }}</b></td>
+                  <td>{{ file.email or "-" }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="3" class="admin-empty">还没有读取 CPA 文件。先填写连接信息，然后点击“读取远端文件”。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="admin-form-actions">
+          <button class="admin-primary-button" type="submit" name="action" value="import_cpa_selected">导入选中文件</button>
+        </div>
+      </form>
+    </section>
+
     <section class="admin-card admin-section admin-tab-panel" id="settings" data-admin-panel="settings">
       <div class="admin-card-head">
         <div>
           <span class="admin-kicker">Settings</span>
           <h2>设置</h2>
-          <p>修改管理员账号、同步源接口、模型接入线路和模型描述。</p>
+          <p>修改管理员账号、模型接入线路和模型描述。Sub2API 与 CPA 在本页上方分块管理。</p>
         </div>
       </div>
 
-      <div class="admin-management-grid">
+      <div class="admin-management-grid admin-single-grid">
         <form method="post" class="admin-mini-form">
           <h3>管理员账号</h3>
           <label>账号<input name="admin_username" value="{{ admin_auth.username }}" autocomplete="username"></label>
           <label>密码<input name="admin_password" type="password" value="{{ admin_auth.password }}" autocomplete="new-password"></label>
           <button class="admin-primary-button" type="submit" name="action" value="save_admin_auth">保存管理员账号</button>
-        </form>
-
-        <form method="post" class="admin-mini-form">
-          <h3>账号同步接口</h3>
-          <div class="admin-inline-fields">
-            <label>Sub2API 名称<input name="sub2api_name" value="{{ integrations.sub2api.name }}"></label>
-            <label>Sub2API 地址<input name="sub2api_base_url" value="{{ integrations.sub2api.base_url }}" placeholder="http://host:port"></label>
-          </div>
-          <div class="admin-inline-fields">
-            <label>Sub2API 账号<input name="sub2api_username" value="{{ integrations.sub2api.username }}"></label>
-            <label>Sub2API 密码<input name="sub2api_password" type="password" value="{{ integrations.sub2api.password }}"></label>
-          </div>
-          <div class="admin-inline-fields">
-            <label>Admin API Key<input name="sub2api_api_key" value="{{ integrations.sub2api.api_key }}"></label>
-            <label>分组 ID<input name="sub2api_group_id" value="{{ integrations.sub2api.group_id }}"></label>
-          </div>
-          <div class="admin-inline-fields">
-            <label>CPA 名称<input name="cpa_name" value="{{ integrations.cpa.name }}"></label>
-            <label>CPA 地址<input name="cpa_base_url" value="{{ integrations.cpa.base_url }}"></label>
-          </div>
-          <label>CPA Secret Key<input name="cpa_secret_key" type="password" value="{{ integrations.cpa.secret_key }}"></label>
-          <div class="admin-form-actions">
-            <button class="admin-primary-button" type="submit" name="action" value="save_integrations">保存接口信息</button>
-            <button type="submit" name="action" value="sync_sub2api">同步 Sub2API</button>
-            <button type="submit" name="action" value="sync_cpa">同步 CPA</button>
-          </div>
         </form>
       </div>
 
@@ -344,7 +495,8 @@
     tabs.forEach((tab) => {
       tab.addEventListener("click", () => activateAdminTab(tab.dataset.adminTab || "account-pool"));
     });
-    const initialTab = (location.hash || "").replace("#", "") || localStorage.getItem("yy-admin-tab") || "account-pool";
+    const requestedTab = (location.hash || "").replace("#", "") || localStorage.getItem("yy-admin-tab") || "account-pool";
+    const initialTab = ["sub2api", "cpa"].includes(requestedTab) ? "settings" : requestedTab;
     activateAdminTab(initialTab, Boolean(location.hash));
   </script>
 </body>
