@@ -5,6 +5,7 @@ let selectedHistoryJobId = null;
 let selectedHistoryDayKey = null;
 let historyExpanded = true;
 const historyDayOpen = new Map();
+const historyIndustryOpen = new Map();
 const NEW_TASK_DRAFT_ID = "__new_task__";
 
 const $ = (sel) => document.querySelector(sel);
@@ -799,6 +800,44 @@ async function loginPoolUser() {
   }
 }
 
+function jobIndustry(job) {
+  const name = String(job.agent_name || "").trim();
+  const id = String(job.agent_id || "").trim();
+  if (name) {
+    return {
+      id: id || `agent:${name}`,
+      name,
+      variant: String(job.agent_variant || "").trim(),
+      source: "agent",
+    };
+  }
+  const haystack = `${job.title || ""}\n${job.prompt || ""}`.toLowerCase();
+  const matched = industryAgents.find((agent) => {
+    const agentName = String(agent.name || "").toLowerCase();
+    return agentName && haystack.includes(agentName);
+  });
+  if (matched) {
+    return { id: matched.id, name: matched.name, variant: "", source: "inferred" };
+  }
+  return { id: "general", name: "通用生图", variant: "", source: "general" };
+}
+
+function historyIndustryKey(dayKey, industry) {
+  return `${dayKey}:${industry.id || industry.name}`;
+}
+
+function restoreAgentFromJob(job) {
+  const matched = industryAgents.find((agent) => agent.id === job.agent_id || agent.name === job.agent_name);
+  selectedAgent = matched || null;
+  agentEnabled = Boolean(matched && job.agent_enabled);
+  appliedAgentVariant = matched ? (job.agent_variant || null) : null;
+  agentGenerated = false;
+  agentPlan = null;
+  syncAgentEntry();
+  syncAgentComposer();
+  renderAgentPanel();
+}
+
 async function logoutPoolUser() {
   await api("/api/pool/logout", { method: "POST", body: "{}" });
   state.pool_user = null;
@@ -1444,33 +1483,70 @@ function renderHistory() {
     if (historyDayOpen.get(key)) {
       const list = document.createElement("div");
       list.className = "history-day-list";
+      const industryGroups = new Map();
       for (const job of dayJobs) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = `history-item ${job.status} ${selectedHistoryJobId === job.id ? "active" : ""}`;
-        btn.innerHTML = `
-          <strong>${escapeHtml(job.title || job.prompt || "未命名任务")}</strong>
-          <span>${statusText(job.status)} · ${historyTimeLabel(job.created_at)}</span>
+        const industry = jobIndustry(job);
+        const industryKey = industry.id || industry.name;
+        if (!industryGroups.has(industryKey)) industryGroups.set(industryKey, { industry, jobs: [] });
+        industryGroups.get(industryKey).jobs.push(job);
+      }
+      for (const { industry, jobs: industryJobs } of industryGroups.values()) {
+        const selectedInIndustry = industryJobs.some((job) => job.id === selectedHistoryJobId);
+        const industryOpenKey = historyIndustryKey(key, industry);
+        if (!historyIndustryOpen.has(industryOpenKey)) {
+          historyIndustryOpen.set(industryOpenKey, selectedInIndustry || key === historyDayKey(Date.now() / 1000) || industry.source !== "general");
+        }
+        const industryGroup = document.createElement("section");
+        industryGroup.className = `history-industry-group ${selectedInIndustry ? "active" : ""}`;
+        const industryHead = document.createElement("button");
+        industryHead.type = "button";
+        industryHead.className = "history-industry-head";
+        industryHead.setAttribute("aria-expanded", String(historyIndustryOpen.get(industryOpenKey)));
+        const variantText = industry.variant ? ` · ${variantLabel(industry.variant)}` : "";
+        industryHead.innerHTML = `
+          <span class="history-industry-name">${escapeHtml(industry.name)}${escapeHtml(variantText)}</span>
+          <span class="history-industry-meta">${industryJobs.length} 条</span>
         `;
-        btn.addEventListener("click", () => {
-          selectedHistoryJobId = job.id;
-          selectedHistoryDayKey = null;
-          selectedGalleryIds.clear();
-          els.prompt.value = job.prompt || "";
-          els.title.value = job.title || "";
-          els.model.value = job.model || els.model.value;
-          if (job.connection_mode) setConnectionMode(job.connection_mode);
-          if (job.api_url && els.connectionMode.value !== "auto") els.apiUrl.value = job.api_url;
-          if (job.aspect_ratio) els.aspectRatio.value = job.aspect_ratio;
-          if (job.resolution) els.resolution.value = job.resolution;
-          els.count.value = job.count || els.count.value;
-          if (job.quality) els.quality.value = job.quality;
-          if (job.output_format) els.outputFormat.value = job.output_format;
-          els.negative.value = job.negative || "";
-          syncSummary();
-          renderState();
+        industryHead.addEventListener("click", () => {
+          historyIndustryOpen.set(industryOpenKey, !historyIndustryOpen.get(industryOpenKey));
+          renderHistory();
         });
-        list.append(btn);
+        industryGroup.append(industryHead);
+        if (historyIndustryOpen.get(industryOpenKey)) {
+          const industryList = document.createElement("div");
+          industryList.className = "history-industry-list";
+          for (const job of industryJobs) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = `history-item ${job.status} ${selectedHistoryJobId === job.id ? "active" : ""}`;
+            btn.innerHTML = `
+              <strong>${escapeHtml(job.title || job.prompt || "未命名任务")}</strong>
+              <span>${statusText(job.status)} · ${historyTimeLabel(job.created_at)} · ${escapeHtml(job.model || "")}</span>
+            `;
+            btn.addEventListener("click", () => {
+              selectedHistoryJobId = job.id;
+              selectedHistoryDayKey = null;
+              selectedGalleryIds.clear();
+              els.prompt.value = job.prompt || "";
+              els.title.value = job.title || "";
+              els.model.value = job.model || els.model.value;
+              if (job.connection_mode) setConnectionMode(job.connection_mode);
+              if (job.api_url && els.connectionMode.value !== "auto") els.apiUrl.value = job.api_url;
+              if (job.aspect_ratio) els.aspectRatio.value = job.aspect_ratio;
+              if (job.resolution) els.resolution.value = job.resolution;
+              els.count.value = job.count || els.count.value;
+              if (job.quality) els.quality.value = job.quality;
+              if (job.output_format) els.outputFormat.value = job.output_format;
+              els.negative.value = job.negative || "";
+              restoreAgentFromJob(job);
+              syncSummary();
+              renderState();
+            });
+            industryList.append(btn);
+          }
+          industryGroup.append(industryList);
+        }
+        list.append(industryGroup);
       }
       group.append(list);
     }
@@ -1784,6 +1860,10 @@ async function performSubmitJob(promptOverride = "") {
         connection_mode: els.connectionMode.value,
         api_url: selectedApiUrl(),
         api_key: selectedApiKey(),
+        agent_id: selectedAgent?.id || "",
+        agent_name: selectedAgent?.name || "",
+        agent_variant: appliedAgentVariant || "",
+        agent_enabled: Boolean(agentEnabled && selectedAgent),
         aspect_ratio: els.aspectRatio.value,
         resolution: els.resolution.value,
         size: requestSize(),
