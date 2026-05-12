@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 管理后台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121430">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121505">
 </head>
 <body class="admin-page">
   <header class="admin-topbar">
@@ -14,7 +14,7 @@
       <strong>YANGYANGAPI</strong>
     </a>
     <nav class="admin-section-nav">
-      <a href="{{ url_for('index') }}">工作台</a>
+      <a href="{{ url_for('index') }}#studio">工作台</a>
       <form method="post" action="{{ url_for('logout') }}"><button type="submit">退出</button></form>
     </nav>
   </header>

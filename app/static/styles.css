@@ -2607,10 +2607,19 @@ body.studio-active .studio-view {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
   gap: 12px 18px;
   padding: 22px 24px;
   border-top: 1px solid var(--border);
   background: rgba(255,255,255,.96);
+}
+.agent-panel-actions .primary-action,
+.agent-panel-actions .subtle-button,
+.agent-panel-actions .danger-action {
+  min-height: 54px;
+  padding: 0 22px;
+  font-size: 16px;
+  font-weight: 840;
 }
 .primary-action.compact,
 .danger-action.compact,
