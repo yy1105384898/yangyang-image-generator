@@ -20,9 +20,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - default
-      - newapi
-      - lan
+      default:
+      newapi:
+      lan:
+        ipv4_address: 192.168.10.200
 
   yangyang-image-generator-proxy:
     image: python:3.12-alpine
