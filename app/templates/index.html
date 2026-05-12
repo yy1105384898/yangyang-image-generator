@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 生图工作台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121120">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605121430">
 </head>
 <body>
   <main id="home" class="home-page">
@@ -425,6 +425,7 @@
             <button data-connection-mode="local" type="button"><strong>本地接入</strong><span>局域网</span></button>
             <button data-connection-mode="direct" type="button"><strong>浏览器直连</strong><span>少一跳</span></button>
             <button data-connection-mode="pool" type="button"><strong>本地号池</strong><span>OAuth</span></button>
+            <button data-connection-mode="custom" type="button"><strong>自定义 API</strong><span>第三方</span></button>
           </div>
           <input id="connectionMode" value="auto" hidden>
           <div id="connectionNote" class="endpoint-note">请求先到本站 /api，再转发到上游，能避开浏览器跨域问题。</div>
@@ -622,6 +623,6 @@
   <script>
     window.YY_MODEL_CONFIG = {{ model_config|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=202605121120"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=202605121430"></script>
 </body>
 </html>

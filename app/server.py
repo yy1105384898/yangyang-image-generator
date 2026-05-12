@@ -135,6 +135,13 @@ def default_model_config() -> dict:
                 "description": "不填写 API Key，直接使用管理员号池里已导入并可用的 OpenAI OAuth 账号生成图片。",
                 "enabled": True,
             },
+            "custom": {
+                "label": "自定义 API",
+                "badge": "第三方",
+                "url": "",
+                "description": "临时接入第三方中转站或其他 OpenAI 兼容 API，需要填写 API URL 和 API Key。",
+                "enabled": True,
+            },
         },
         "model_profiles": [
             {
@@ -1618,6 +1625,8 @@ def candidate_api_urls(connection_mode: str, api_url: str) -> list[str]:
     if mode == "auto":
         order = read_model_config().get("auto_order") or list(AUTO_CONNECTION_ORDER)
         return [endpoints[item] for item in order if endpoints.get(item)]
+    if mode == "custom":
+        return [api_url.strip()] if api_url.strip() else []
     return [api_url.strip() or endpoints.get(mode, NEW_API_BASE)]
 
 
@@ -2261,6 +2270,8 @@ def models():
     connection_mode = str(payload.get("connection_mode") or "proxy").strip()
     pool_user = None
     api_url = str(payload.get("api_url") or "").strip()
+    if connection_mode == "custom" and not api_url:
+        return jsonify({"error": "请先填写自定义 API URL"}), 400
     if connection_mode == "pool":
         pool_user, pool_error = require_pool_user_json()
         if pool_error:
@@ -2306,6 +2317,8 @@ def create_job():
     if connection_mode == "pool" and not pool_available_accounts():
         return jsonify({"error": "本地号池没有可用账号，请先到管理员号池导入账号并刷新额度"}), 400
     api_url = str(payload.get("api_url") or "").strip()
+    if connection_mode == "custom" and not api_url:
+        return jsonify({"error": "请先填写自定义 API URL"}), 400
     if connection_mode == "pool":
         resolved_api_url, resolve_errors = "local-account-pool", []
     else:
@@ -2380,6 +2393,8 @@ def retry_job(job_id):
     if connection_mode == "pool" and not pool_available_accounts():
         return jsonify({"error": "本地号池没有可用账号，请先到管理员号池导入账号并刷新额度"}), 400
     api_url = str(payload.get("api_url") or source.get("api_url") or "").strip()
+    if connection_mode == "custom" and not api_url:
+        return jsonify({"error": "请先填写自定义 API URL"}), 400
     if connection_mode == "pool":
         resolved_api_url, resolve_errors = "local-account-pool", []
     else:

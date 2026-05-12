@@ -62,7 +62,7 @@ body.studio-active .home-page {
   flex-direction: column;
   justify-content: center;
   overflow: hidden;
-  background-image: url("v20260510151225993-home-hero-DQ1eU42p.png");
+  background-image: url("home-hero-lan-safe.png");
   background-position: center;
   background-size: cover;
   padding: 92px clamp(20px, 3.75vw, 72px) 72px;
