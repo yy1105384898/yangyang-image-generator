@@ -1609,21 +1609,33 @@ function galleryItems() {
   const visibleJobs = selectedHistoryJobId
     ? state.jobs.filter((job) => job.id === selectedHistoryJobId)
     : state.jobs;
-  const mediaItems = visibleMedia.map((media) => ({
-    kind: "media",
-    id: `media:${media.id}`,
-    rawId: media.id,
-    jobId: media.job_id || "",
-    status: "success",
-    title: media.model || "生成图片",
-    prompt: media.prompt || "",
-    url: media.url,
-    index: media.index,
-    created_at: media.created_at,
-    aspect_ratio: media.aspect_ratio || "1:1",
-    resolution: media.resolution || "1K",
-    size: media.size || requestSize(),
-  }));
+  const jobById = new Map(state.jobs.map((job) => [job.id, job]));
+  const agentInfo = (job = {}) => {
+    const enabled = Boolean(job.agent_enabled);
+    return {
+      agentName: enabled ? String(job.agent_name || "").trim() : "",
+      agentVariant: enabled ? String(job.agent_variant || "").trim() : "",
+    };
+  };
+  const mediaItems = visibleMedia.map((media) => {
+    const job = jobById.get(media.job_id) || {};
+    return {
+      kind: "media",
+      id: `media:${media.id}`,
+      rawId: media.id,
+      jobId: media.job_id || "",
+      status: "success",
+      title: media.model || "生成图片",
+      prompt: media.prompt || "",
+      url: media.url,
+      index: media.index,
+      created_at: media.created_at,
+      aspect_ratio: media.aspect_ratio || "1:1",
+      resolution: media.resolution || "1K",
+      size: media.size || requestSize(),
+      ...agentInfo(job),
+    };
+  });
   const failedItems = visibleJobs
     .filter((job) => job.status === "error")
     .flatMap((job) => {
@@ -1643,6 +1655,7 @@ function galleryItems() {
         aspect_ratio: job.aspect_ratio || "1:1",
         resolution: job.resolution || "1K",
         size: job.size || "1024x1024",
+        ...agentInfo(job),
       }));
     });
   return [...mediaItems, ...failedItems].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
@@ -1768,7 +1781,7 @@ function renderMedia() {
           <span>${escapeHtml(item.resolution)}</span>
           <span>${escapeHtml(item.size)}</span>
         </div>
-        ${selectedAgent ? `<div class="image-agent-tag">✣ ${escapeHtml(selectedAgent.name)} ${appliedAgentVariant ? variantLabel(appliedAgentVariant) : ""}</div>` : ""}
+        ${item.agentName ? `<div class="image-agent-tag">✣ ${escapeHtml(item.agentName)} ${item.agentVariant ? variantLabel(item.agentVariant) : ""}</div>` : ""}
         ${item.status === "error" ? `<div class="image-error">${escapeHtml(item.error || "生成失败")}</div>` : ""}
         <p>${escapeHtml(item.prompt || "暂无提示词")}</p>
         <div class="image-actions">
