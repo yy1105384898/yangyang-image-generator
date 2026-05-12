@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 生图工作台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605122020">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605122045">
 </head>
 <body>
   <main id="home" class="home-page">
@@ -209,9 +209,9 @@
           <a class="topbar-home-button" href="#studio">↗ 商业生图台</a>
         </div>
         <div class="research-head-main">
-          <span class="home-kicker">Research Canvas</span>
-          <h2>科研工作台</h2>
-          <p>参考 ResearchCanvasAI 的画布流程，把科研图提示词、提示词仓库、局部编辑、局部截图重绘、高清放大和线稿/色稿双控制集中到一个入口。</p>
+          <span class="home-kicker">Research Flow Canvas</span>
+          <h2>科研流程图工作台</h2>
+          <p>把论文、项目说明或实验流程先拆成研究主线、模块关系和箭头走向，再生成可用于生图和后期 PPT / AI 重绘的流程图 Prompt。</p>
         </div>
         <div class="research-head-actions">
           <span class="status-pill">S-C-S-S</span>
@@ -221,22 +221,22 @@
 
       <div class="research-layout">
         <aside class="research-panel">
-          <div class="research-section-title"><span>01</span><strong>科研图提示词</strong></div>
+          <div class="research-section-title"><span>01</span><strong>科研流程图提示词</strong></div>
           <label class="research-field">
-            <span>研究主题 / 设备对象</span>
-            <input id="researchSubject" value="200 L 不锈钢反应釜与管路系统" placeholder="例如：细胞机制示意图、反应釜结构图、论文图形摘要">
+            <span>流程图主题 / 核心对象</span>
+            <input id="researchSubject" value="200 L 不锈钢反应釜工艺流程" placeholder="例如：DSS 实验流程、细胞机制流程、反应釜工艺路线">
           </label>
           <label class="research-field">
-            <span>项目内容 / 论文草稿 / 模块说明</span>
-            <textarea id="researchProjectContext" rows="5" placeholder="把项目说明、论文摘要、实验流程、模块设计或关键逻辑粘贴到这里。Codex 会先整理主线，再按 S-C-S-S 输出绘图 Prompt。"></textarea>
+            <span>项目内容 / 论文草稿 / 实验步骤</span>
+            <textarea id="researchProjectContext" rows="5" placeholder="粘贴研究背景、实验步骤、模型结构、输入输出或结果逻辑。系统会先整理：主体是什么、步骤怎么走、模块怎么连、最后输出什么。"></textarea>
           </label>
           <label class="research-field">
             <span>图类型</span>
             <select id="researchFigureType">
-              <option value="mechanism">机制示意图</option>
-              <option value="apparatus" selected>实验装置图</option>
+              <option value="workflow" selected>科研流程图</option>
+              <option value="mechanism">机制流程图</option>
+              <option value="apparatus">实验装置流程图</option>
               <option value="abstract">论文图形摘要</option>
-              <option value="workflow">流程图</option>
               <option value="local-redraw">局部重绘方案</option>
             </select>
           </label>
@@ -273,22 +273,32 @@
           <div class="research-canvas" id="researchCanvas">
             <div class="research-grid"></div>
             <article class="research-node research-node-image">
-              <span>元素提取</span>
-              <div class="research-reactor-figure">
-                <div class="reactor-motor"></div>
-                <div class="reactor-neck"></div>
-                <div class="reactor-body"><strong>200 L</strong></div>
-                <div class="reactor-leg left"></div>
-                <div class="reactor-leg right"></div>
-                <div class="reactor-pipe pipe-left"></div>
-                <div class="reactor-pipe pipe-right"></div>
+              <span>流程骨架</span>
+              <div class="research-flow-figure">
+                <div class="flow-step">
+                  <small>01</small>
+                  <strong>读项目</strong>
+                  <em>论文 / 实验 / 模块</em>
+                </div>
+                <i></i>
+                <div class="flow-step">
+                  <small>02</small>
+                  <strong>拆主线</strong>
+                  <em>主体 / 变量 / 结果</em>
+                </div>
+                <i></i>
+                <div class="flow-step">
+                  <small>03</small>
+                  <strong>出图稿</strong>
+                  <em>流程图 Prompt</em>
+                </div>
               </div>
-              <p>可作为实验装置图、局部高清重生成和线稿/色稿双控制的对象。</p>
+              <p>重点不是思维导图，而是把研究步骤、模块关系和因果箭头整理成可直接生图的科研流程图。</p>
             </article>
             <article class="research-node research-node-prompt">
-              <span>工作流节点</span>
-              <strong>线稿图 + 色稿图双控制</strong>
-              <p>上传线稿约束结构，上传色稿约束材质与配色，再发送到图生图/编辑流程。</p>
+              <span>后期编辑</span>
+              <strong>线稿 + 色稿双控制</strong>
+              <p>流程图初稿不满意时，用线稿锁定结构，用色稿锁定配色和质感，再做局部截图重绘或高清重生成。</p>
             </article>
           </div>
         </section>
@@ -316,7 +326,7 @@
           <div id="researchPromptRepo" class="research-prompt-repo"></div>
           <div class="research-skill-note">
             <strong>科研流程图技能</strong>
-            <span>先读项目内容，拆主体、构图、结构细节、风格，再送到生图台出初稿，最后到 PPT / AI 重绘优化。</span>
+            <span>先读项目内容，拆研究主线、模块关系、箭头走向和图层，再生成流程图 Prompt，最后到 PPT / AI 重绘优化。</span>
           </div>
         </aside>
       </div>
@@ -744,6 +754,6 @@
   <script>
     window.YY_MODEL_CONFIG = {{ model_config|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=202605121910"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=202605122045"></script>
 </body>
 </html>

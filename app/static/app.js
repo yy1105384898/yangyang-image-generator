@@ -2509,21 +2509,21 @@ function escapeAttr(value) {
 const researchPromptPresets = [
   {
     id: "research-apparatus",
-    category: "实验装置",
-    name: "不锈钢反应釜装置图",
-    prompt: "生成一张实验装置科研插图，主体为 200 L 不锈钢反应釜、顶部电机、搅拌轴、进出料管路、阀门、压力表和支撑脚。要求白底，工程说明图风格，结构准确，金属材质清晰，管路层级明确，保留少量标签区域，适合论文方法图或实验平台介绍。"
+    category: "实验流程",
+    name: "反应釜工艺流程图",
+    prompt: "生成一张科研工艺流程图，主体为 200 L 不锈钢反应釜系统。按左到右流程展示：原料输入、计量进料、反应釜搅拌与控温、压力/温度监测、出料、产物收集。每个模块用简洁图标或设备小图表示，用箭头标明物料流和控制流，保留标签位置，白底，工程科研说明图风格。"
   },
   {
     id: "research-mechanism",
-    category: "机制图解",
-    name: "Nature 风格机制示意图",
-    prompt: "生成一张 Nature 风格干净矢量科研机制图，白色背景，多面板布局，左侧展示研究对象，中间展示关键通路与因果箭头，右侧展示结果表型。使用克制青绿色与琥珀色点缀，线宽统一，标签清晰，避免装饰性素材和不可读文字。"
+    category: "机制流程",
+    name: "机制路径流程图",
+    prompt: "生成一张 Nature 风格科研机制流程图，白色背景，按左到右或上到下展示研究对象、刺激/处理、关键通路、核心变量变化和最终表型结果。模块之间必须用清晰箭头连接，箭头表示因果关系或步骤推进，避免做成发散式思维导图。"
   },
   {
     id: "research-abstract",
     category: "图形摘要",
-    name: "论文图形摘要",
-    prompt: "生成一张 Cell journal graphical abstract 风格科研图形摘要，中心突出核心机制，左到右因果流清楚，模块化分区，少量高可读标签，轻微阴影只用于分离层级，整体构图适合论文首页图、基金汇报和学术海报。"
+    name: "论文图形摘要流程",
+    prompt: "生成一张 Cell journal graphical abstract 风格科研流程图。画面按照问题背景、实验设计、关键机制、结果读出、结论应用五段组织，左到右推进，模块化分区，少量高可读标签，轻微阴影只用于区分层级，整体适合论文首页图、基金汇报和学术海报。"
   },
   {
     id: "research-dual-control",
@@ -2574,22 +2574,22 @@ const researchSkills = [
 ];
 
 function buildResearchPrompt() {
-  const subject = ($("#researchSubject")?.value || "科研对象").trim();
+  const subject = ($("#researchSubject")?.value || "科研流程").trim();
   const context = ($("#researchProjectContext")?.value || "").trim();
-  const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研图";
+  const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研流程图";
   const style = $("#researchStyle")?.selectedOptions?.[0]?.textContent || "干净科研插图";
   const skill = researchSkills.find((item) => item.id === selectedResearchSkillId) || researchSkills[0];
   const extracted = context
     ? context.replace(/\s+/g, " ").slice(0, 520)
     : "未提供项目正文时，基于研究主题自行拆解核心对象、流程模块、关键变量和结论关系。";
   const base = [
-    "请先读懂下面的项目内容，再生成科研绘图 Prompt，不要直接泛泛描述。",
+    "请先读懂下面的项目内容，再生成科研流程图 Prompt，不要写成发散式思维导图，也不要直接泛泛描述。",
     `当前技能：${skill.name}。${skill.instruction}`,
     `项目内容：${extracted}`,
     "",
-    `S - Subject（主体）：${subject}。明确图里要呈现的核心对象、研究系统、实验对象或流程主线。`,
-    `C - Composition（构图）：生成一张${figureType}，建议左到右或上到下的模块化科研流程图；主线清楚，模块关系明确，关键节点用箭头连接，保留后期重绘和标注空间。`,
-    "S - Structure（结构细节）：拆出每个模块内部元素、输入输出、变量、处理过程、结果读出和局部放大框；箭头走向必须和项目逻辑一致，不要添加无关模块。",
+    `S - Subject（主体）：${subject}。明确流程图要表达的核心研究对象、输入条件、处理过程、关键变量和最终输出。`,
+    `C - Composition（构图）：生成一张${figureType}，采用左到右或上到下的线性/分层流程布局；每一步是一个模块，模块之间用箭头连接，箭头方向必须表达步骤推进、因果关系或数据/物料流。`,
+    "S - Structure（结构细节）：拆出每个流程节点的输入、处理、输出、变量、读出指标和可局部放大的关键部位；需要标明主流程、支路、反馈或对照组，不添加无关模块。",
     `S - Style（风格渲染）：${style}，白色或浅色背景，构图干净，信息层级清楚，适合论文图、基金汇报或科研流程图初稿。`,
     "图像编辑要求：如果使用参考图，线稿图用于约束结构、轮廓、局部边界；色稿图用于约束材质、配色和光影。局部高清重生成时只增强选区，不改变整体科学含义。",
     "负面控制：避免低清晰度、错别字、伪科学结构、不可读标签、随机多余零件、装饰性海报风。"
@@ -2600,14 +2600,14 @@ function buildResearchPrompt() {
 function renderResearchScssCards() {
   const wrap = $("#researchScssCards");
   if (!wrap) return;
-  const subject = ($("#researchSubject")?.value || "科研主体").trim();
-  const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研图";
+  const subject = ($("#researchSubject")?.value || "科研流程").trim();
+  const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研流程图";
   const style = $("#researchStyle")?.selectedOptions?.[0]?.textContent || "科研插图风格";
   const context = ($("#researchProjectContext")?.value || "").trim();
   const cards = [
     ["S", "Subject", subject],
-    ["C", "Composition", `${figureType}，模块化主线，箭头连接输入、处理和结果。`],
-    ["S", "Structure", context ? "按项目内容拆模块、变量、流程、输出和局部放大框。" : "粘贴项目内容后自动按项目主线拆结构。"],
+    ["C", "Composition", `${figureType}，按步骤排布，箭头连接输入、处理、结果和分支。`],
+    ["S", "Structure", context ? "按项目内容拆流程节点、变量、对照、输出和局部放大框。" : "粘贴项目内容后自动拆研究主线和流程节点。"],
     ["S", "Style", style],
   ];
   wrap.innerHTML = cards.map(([letter, title, body]) => `
