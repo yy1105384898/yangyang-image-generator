@@ -71,6 +71,58 @@ docker compose up -d --build
 
 首次登录后建议在后台“设置”里修改管理员账号密码，并重新配置模型线路和号池用户。
 
+## 部署方式
+
+### Docker 部署
+
+适合本地、局域网服务器或容器化环境。默认方式是从源码构建：
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+如果 GitHub Actions 已发布镜像，也可以直接拉取 GHCR 镜像：
+
+```bash
+docker pull ghcr.io/yy1105384898/yangyang-image-generator:latest
+docker run -d \
+  --name yangyang-image-generator \
+  --restart unless-stopped \
+  -p 3012:3012 \
+  --env-file .env \
+  -v ./data:/app/data \
+  ghcr.io/yy1105384898/yangyang-image-generator:latest
+```
+
+镜像由 `.github/workflows/docker-image.yml` 自动构建：推送到 `master` 会发布 `latest`，打 `v*` 标签会发布对应版本标签。
+
+### 自己发布 Docker 镜像
+
+如果要发布到自己的 Docker Hub 或私有仓库：
+
+```bash
+docker login
+docker build -t your-name/yangyang-image-generator:latest .
+docker push your-name/yangyang-image-generator:latest
+```
+
+别人部署时把镜像名替换成你的仓库名即可。
+
+### 普通服务器部署
+
+适合 Linux 物理机或云服务器：
+
+```bash
+cp .env.example .env
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+./scripts/server-run.sh
+```
+
+生产环境建议改用 `systemd` 托管 `gunicorn`，示例文件在 `deploy/systemd/`；如果前面还要挂 Nginx，示例配置在 `deploy/nginx/`。两种方式都复用同一份 `.env` 和 `data/`。
+
 ## 配置说明
 
 主要环境变量见 `.env.example`：
