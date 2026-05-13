@@ -40,9 +40,8 @@ def env_endpoint(name: str, default: str) -> str:
 CONNECTION_ENDPOINTS = {
     "local": env_endpoint("local", "http://127.0.0.1:3004/v1"),
     "proxy": env_endpoint("proxy", "http://your-server.example.com:3004/v1"),
-    "direct": env_endpoint("direct", "https://your-newapi.example.com/v1"),
 }
-AUTO_CONNECTION_ORDER = ("local", "proxy", "direct")
+AUTO_CONNECTION_ORDER = ("local", "proxy")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-image-2")
 AVAILABLE_MODELS = [m.strip() for m in os.getenv("AVAILABLE_MODELS", DEFAULT_MODEL).split(",") if m.strip()]
 MAX_HISTORY = int(os.getenv("MAX_HISTORY", "200"))
@@ -99,7 +98,7 @@ def default_model_config() -> dict:
     model_ids = AVAILABLE_MODELS or [DEFAULT_MODEL]
     return {
         "default_connection_mode": "auto",
-        "auto_order": ["local", "proxy", "direct"],
+        "auto_order": ["local", "proxy"],
         "connections": {
             "local": {
                 "label": "本地接入",
@@ -115,18 +114,11 @@ def default_model_config() -> dict:
                 "description": "经阿里云固定入口转发到上游，适合外网和移动网络使用。",
                 "enabled": True,
             },
-            "direct": {
-                "label": "浏览器直连",
-                "badge": "少一跳",
-                "url": CONNECTION_ENDPOINTS["direct"],
-                "description": "直接访问公网域名，适合支持跨域和证书正常的线路。",
-                "enabled": True,
-            },
             "auto": {
                 "label": "自动",
                 "badge": "兜底",
                 "url": "",
-                "description": "按本地接入、中转代理、浏览器直连依次尝试，哪个能连上就用哪个。",
+                "description": "按本地接入、中转代理依次尝试，哪个能连上就用哪个。",
                 "enabled": True,
             },
             "pool": {
@@ -185,7 +177,7 @@ def normalize_model_config(raw: dict | None = None) -> dict:
             base["model_profiles"] = cleaned
     auto_order = raw.get("auto_order")
     if isinstance(auto_order, list):
-        base["auto_order"] = [item for item in auto_order if item in ("local", "proxy", "direct")] or base["auto_order"]
+        base["auto_order"] = [item for item in auto_order if item in ("local", "proxy")] or base["auto_order"]
     default_mode = str(raw.get("default_connection_mode") or base["default_connection_mode"]).strip()
     if default_mode in base["connections"]:
         base["default_connection_mode"] = default_mode
@@ -1790,6 +1782,8 @@ def candidate_api_urls(connection_mode: str, api_url: str) -> list[str]:
         return [endpoints[item] for item in order if endpoints.get(item)]
     if mode == "custom":
         return [api_url.strip()] if api_url.strip() else []
+    if mode not in endpoints:
+        mode = "proxy"
     return [api_url.strip() or endpoints.get(mode, NEW_API_BASE)]
 
 
@@ -2079,7 +2073,7 @@ def admin():
         elif action == "save_model_config":
             current = read_model_config()
             connections = {}
-            for key in ("local", "proxy", "direct", "auto"):
+            for key in ("local", "proxy", "auto"):
                 existing = current["connections"].get(key, {})
                 connections[key] = {
                     "label": request.form.get(f"{key}_label", existing.get("label", key)).strip(),
@@ -2101,7 +2095,7 @@ def admin():
                 })
             config = {
                 "default_connection_mode": request.form.get("default_connection_mode", "proxy"),
-                "auto_order": [item.strip() for item in request.form.get("auto_order", "local,proxy,direct").split(",")],
+                "auto_order": [item.strip() for item in request.form.get("auto_order", "local,proxy").split(",")],
                 "connections": connections,
                 "model_profiles": profiles,
             }

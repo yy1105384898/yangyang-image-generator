@@ -433,7 +433,7 @@
           <div class="admin-inline-fields">
             <label>默认线路
               <select name="default_connection_mode">
-                {% for mode in ["local","proxy","direct","auto"] %}
+                {% for mode in ["local","proxy","auto"] %}
                   <option value="{{ mode }}" {% if config.default_connection_mode == mode %}selected{% endif %}>{{ mode }}</option>
                 {% endfor %}
               </select>
@@ -442,7 +442,7 @@
           </div>
         </div>
         <div class="admin-route-grid">
-          {% for key in ["local","proxy","direct","auto"] %}
+          {% for key in ["local","proxy","auto"] %}
             {% set conn = config["connections"][key] %}
             <article class="admin-route-item">
               <div class="admin-route-title">

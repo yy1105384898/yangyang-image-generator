@@ -293,7 +293,6 @@ const CUSTOM_API_URL_KEY = "yangyang_image_custom_api_url";
 const connectionNotes = {
   proxy: modelConnections.proxy?.description || "中转代理线路，可在后台或环境变量 CONNECTION_PROXY_URL 中配置。",
   local: modelConnections.local?.description || "本地接入线路，可在后台或环境变量 CONNECTION_LOCAL_URL 中配置。",
-  direct: modelConnections.direct?.description || "浏览器直连线路，可在后台或环境变量 CONNECTION_DIRECT_URL 中配置。",
   auto: modelConnections.auto?.description || "自动模式会按后台配置顺序尝试可用线路。",
   pool: modelConnections.pool?.description || "本地号池模式不需要填写 API Key，会从管理员号池中挑选可用账号生成图片。",
   custom: modelConnections.custom?.description || "自定义 API 模式用于临时接入第三方中转站或其他 OpenAI 兼容地址。",
@@ -302,7 +301,6 @@ const connectionNotes = {
 const connectionEndpoints = {
   proxy: modelConnections.proxy?.url || "http://your-server.example.com:3004/v1",
   local: modelConnections.local?.url || "http://127.0.0.1:3004/v1",
-  direct: modelConnections.direct?.url || "https://your-newapi.example.com/v1",
   auto: modelConnections.auto?.label || "自动选择",
   pool: modelConnections.pool?.label || "使用本地号池，无需 API URL",
   custom: modelConnections.custom?.url || "",
@@ -315,7 +313,7 @@ if (modelConfig.connections) {
     const badge = item.badge ? ` ${item.badge}` : "";
     if (key !== "auto" && item.url) connectionEndpoints[key] = item.url;
     if (key === "auto") {
-      const order = Array.isArray(modelConfig.auto_order) ? modelConfig.auto_order : ["local", "proxy", "direct"];
+      const order = Array.isArray(modelConfig.auto_order) ? modelConfig.auto_order : ["local", "proxy"];
       connectionEndpoints.auto = `自动选择：${order.map((mode) => modelConfig.connections?.[mode]?.label || mode).join(" → ")}`;
     }
     connectionNotes[key] = `${label}${badge ? `（${item.badge}）` : ""}：${item.description || item.url || "后台可维护线路说明。"}`;
@@ -637,6 +635,20 @@ function syncQuickConfigControls() {
   if (els.quickFormat) els.quickFormat.value = els.outputFormat.value;
 }
 
+function clampNumberInput(input, fallback, min, max) {
+  const value = Number.parseInt(input?.value, 10);
+  const next = Math.max(min, Math.min(max, Number.isFinite(value) ? value : fallback));
+  if (input) input.value = String(next);
+  return next;
+}
+
+function normalizeGenerationNumbers() {
+  const count = clampNumberInput(els.count, 1, 1, 20);
+  const concurrency = clampNumberInput(els.concurrency, 2, 1, 6);
+  const retryLimit = clampNumberInput(els.retryLimit, 2, 0, 5);
+  return { count, concurrency, retryLimit };
+}
+
 function quickConfigTitle() {
   return `打开生成配置：${els.count.value}张 · ${els.aspectRatio.value} · ${els.resolution.value} · ${requestSize()} · ${els.outputFormat.value.toUpperCase()} · 并发 ${els.concurrency.value}`;
 }
@@ -667,6 +679,7 @@ function setQuickConfigPanel(open) {
 }
 
 function syncSummary() {
+  normalizeGenerationNumbers();
   const protocol = protocols[els.protocol.value] || protocols["custom-openai"];
   const hasPrompt = Boolean(els.prompt.value.trim());
   els.composer?.classList.toggle("has-prompt", hasPrompt);
@@ -772,7 +785,7 @@ function setModelStatus(message, tone = "idle") {
 
 function setModelFetchHelp(message = "", tone = "idle") {
   if (!els.modelFetchHelp) return;
-  els.modelFetchHelp.textContent = message || "API Key 可在 New API 后台的“令牌”里创建或复制；如果浏览器直连读取失败，优先切到“自动”或“中转代理”。";
+  els.modelFetchHelp.textContent = message || "API Key 可在 New API 后台的“令牌”里创建或复制；如果读取失败，优先切到“自动”或“中转代理”。";
   els.modelFetchHelp.classList.toggle("error", tone === "error");
   els.modelFetchHelp.classList.toggle("success", tone === "success");
 }
@@ -1894,6 +1907,7 @@ async function performSubmitJob(promptOverride = "") {
     return;
   }
   saveApiKeyPreference();
+  const numbers = normalizeGenerationNumbers();
   els.submitJob.disabled = true;
   els.submitJob.textContent = "…";
   try {
@@ -1917,9 +1931,9 @@ async function performSubmitJob(promptOverride = "") {
         size: requestSize(),
         quality: els.quality.value,
         output_format: els.outputFormat.value,
-        count: Number(els.count.value || 1),
-        concurrency: Number(els.concurrency.value || 2),
-        retry_limit: Number(els.retryLimit.value || 2),
+        count: numbers.count,
+        concurrency: numbers.concurrency,
+        retry_limit: numbers.retryLimit,
         seed: els.seed.value.trim(),
         negative: els.negative.value.trim(),
         variants: buildVariants(),
@@ -2069,13 +2083,11 @@ async function refreshModels({ silent = false } = {}) {
     renderAvailableModels();
     setConnectionStatus("连接失败", "error");
     const mode = els.connectionMode.value;
-    const directHint = mode === "direct"
-      ? "浏览器直连域名目前只有 IPv6，局域网或当前网络不支持 IPv6 时会失败；建议切到“自动”或“中转代理”。"
-      : mode === "custom"
+    const connectionHint = mode === "custom"
         ? "自定义 API 要确认地址、Token、模型权限和 OpenAI 兼容路径都正确。"
         : "建议先用“自动”读取；Token 可在 New API 后台“令牌”里创建或复制。";
     setModelStatus(`✕ 读取失败：${err.message}`, "error");
-    setModelFetchHelp(`${directHint} 如果仍失败，检查 New API Token 是否有效、是否有模型权限。`, "error");
+    setModelFetchHelp(`${connectionHint} 如果仍失败，检查 New API Token 是否有效、是否有模型权限。`, "error");
     if (!silent) {
       els.apiKey.focus();
     }
@@ -2370,7 +2382,6 @@ function recommendedPromptText() {
 function setRecommendedParams({ quality = "auto", applyNow = false } = {}) {
   els.aspectRatio.value = selectedAgent?.aspectRatio || "1:1";
   els.resolution.value = "1K";
-  els.count.value = "2";
   els.outputFormat.value = "png";
   if ([...els.quality.options].some((option) => option.value === quality)) {
     els.quality.value = quality;

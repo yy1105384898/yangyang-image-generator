@@ -22,8 +22,6 @@ services:
     networks:
       default:
       newapi:
-      lan:
-        ipv4_address: 192.168.10.200
 
   yangyang-image-generator-proxy:
     image: python:3.12-alpine
@@ -67,7 +65,3 @@ networks:
   newapi:
     external: true
     name: newapi_new-api-network
-
-  lan:
-    external: true
-    name: lan-macvlan
