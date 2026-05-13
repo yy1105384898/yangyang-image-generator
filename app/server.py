@@ -1914,7 +1914,7 @@ def build_agent_plan_messages(payload: dict) -> list[dict]:
             "role": "system",
             "content": (
                 "你是商业生图工作台的行业创意总监和提示词工程师。"
-                "只输出严格 JSON，不要 Markdown。"
+                "只输出严格 json object，不要 Markdown。"
                 "你要为同一个业务 brief 生成 stable、creative、commercial 三套明显不同的中文生图提示词。"
                 "三套方案必须在场景、构图、光线、镜头、道具或视觉隐喻上有实质差异；"
                 "creative 不能只写更有创意，必须给出可执行画面方案。"

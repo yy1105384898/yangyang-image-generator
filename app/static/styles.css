@@ -1882,6 +1882,17 @@ body.research-active .studio-view {
   font-size: 17px;
   font-weight: 880;
 }
+.preflight-generate.paused {
+  border-color: #edd28a;
+  background: #fff8e8;
+}
+.preflight-generate.paused .preflight-copy,
+.preflight-generate.paused .preflight-copy strong {
+  color: #8a6400;
+}
+.preflight-generate.paused .preflight-track span {
+  background: #d79a00;
+}
 .analysis-block {
   display: grid;
   gap: 10px;
@@ -2537,13 +2548,14 @@ body.research-active .studio-view {
   transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
 }
 .agent-variant-card:hover,
-.agent-variant-card:focus-visible {
+.agent-variant-card:focus-visible,
+.agent-variant-card.selected {
   border-color: #78bf9f;
   box-shadow: 0 14px 34px rgba(16, 163, 127, .13);
   outline: none;
   transform: translateY(-1px);
 }
-.agent-variant-card:first-child {
+.agent-variant-card.selected {
   border-color: #9cc8af;
   background: linear-gradient(180deg, #f6fffc, #fff);
 }

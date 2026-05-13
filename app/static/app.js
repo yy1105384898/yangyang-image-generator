@@ -162,6 +162,7 @@ let agentGenerated = false;
 let agentPlan = null;
 let agentPlanRevision = 0;
 let appliedAgentVariant = null;
+let previewAgentVariant = "stable";
 let customIndustryAgent = null;
 let agentComposerExpanded = false;
 let guideStep = 0;
@@ -300,6 +301,9 @@ const protocols = {
 const modelConfig = window.YY_MODEL_CONFIG || {};
 const modelConnections = modelConfig.connections || {};
 const CUSTOM_API_URL_KEY = "yangyang_image_custom_api_url";
+const SELECTED_IMAGE_MODEL_KEY = "yangyang_image_selected_model";
+const SELECTED_TEXT_MODEL_KEY = "yangyang_image_selected_text_model";
+const MANUAL_TEXT_MODEL_KEY = "yangyang_image_manual_text_model";
 const ALLOWED_CONNECTION_MODES = new Set(["custom", "pool"]);
 
 const connectionNotes = {
@@ -1162,7 +1166,8 @@ function formatModelTime() {
 }
 
 function replaceModelOptions(models) {
-  const current = els.model.value;
+  const saved = localStorage.getItem(SELECTED_IMAGE_MODEL_KEY) || "";
+  const current = els.model.value || saved;
   els.model.innerHTML = "";
   if (!models.length) {
     const option = document.createElement("option");
@@ -1183,9 +1188,12 @@ function replaceModelOptions(models) {
     if (model === current) option.selected = true;
     els.model.append(option);
   }
-  if (!models.includes(current) && models[0]) {
+  if (models.includes(current)) {
+    els.model.value = current;
+  } else if (models[0]) {
     els.model.value = models[0];
   }
+  if (els.model.value) localStorage.setItem(SELECTED_IMAGE_MODEL_KEY, els.model.value);
   syncSummary();
 }
 
@@ -1206,7 +1214,8 @@ function syncTextModelFields() {
 
 function replaceTextModelOptions(models = []) {
   if (!els.analysisModel) return;
-  const current = els.analysisModel.value;
+  const saved = localStorage.getItem(SELECTED_TEXT_MODEL_KEY) || "";
+  const current = els.analysisModel.value || saved;
   els.analysisModel.innerHTML = "";
   if (models.length) {
     if (els.reuseTextApiKey) els.reuseTextApiKey.checked = true;
@@ -1218,6 +1227,7 @@ function replaceTextModelOptions(models = []) {
     }
     els.analysisModel.disabled = false;
     els.analysisModel.value = models.includes(current) ? current : preferredTextModel(models);
+    if (els.analysisModel.value) localStorage.setItem(SELECTED_TEXT_MODEL_KEY, els.analysisModel.value);
   } else {
     const option = document.createElement("option");
     option.value = "";
@@ -1225,6 +1235,9 @@ function replaceTextModelOptions(models = []) {
     els.analysisModel.append(option);
     els.analysisModel.disabled = true;
     if (els.reuseTextApiKey) els.reuseTextApiKey.checked = false;
+    if (els.manualTextModel && !els.manualTextModel.value.trim()) {
+      els.manualTextModel.value = localStorage.getItem(MANUAL_TEXT_MODEL_KEY) || "";
+    }
   }
   syncTextModelFields();
 }
@@ -1262,6 +1275,7 @@ function renderAvailableModels(models = verifiedImageModels) {
     `;
     button.addEventListener("click", () => {
       els.model.value = model;
+      localStorage.setItem(SELECTED_IMAGE_MODEL_KEY, model);
       syncSummary();
       renderAvailableModels();
     });
@@ -1376,6 +1390,21 @@ function setAgentFooter(mode) {
   els.applyAgent.classList.toggle("is-disabled", empty);
   els.disableAgent.disabled = false;
   if (form) els.disableAgent.textContent = "停用行业 Agent";
+}
+
+function syncAgentVariantActions() {
+  const actions = [
+    [els.applyStableAgent, "stable", "稳定版"],
+    [els.applyCreativeAgent, "creative", "创意版"],
+    [els.applyCommercialAgent, "commercial", "商业版"],
+  ];
+  for (const [button, id, label] of actions) {
+    if (!button) continue;
+    const active = previewAgentVariant === id;
+    button.classList.toggle("primary-action", active);
+    button.classList.toggle("subtle-button", !active);
+    button.textContent = `${active ? "✣ 应用当前预览" : "✣ 应用"}${label}到提示词`;
+  }
 }
 
 function renderAgentList() {
@@ -1683,11 +1712,18 @@ async function requestAgentPlan(values, revision) {
 function renderAgentGenerated() {
   const fields = selectedAgent.fields || {};
   const values = agentPlan.values;
+  previewAgentVariant = agentPlan.variants.some((item) => item.id === previewAgentVariant) ? previewAgentVariant : agentPlan.variants[0]?.id || "stable";
+  const skillNames = (Array.isArray(values.skills) ? values.skills : []).map((item) => item.name).filter(Boolean);
+  const sourceLine = agentPlan.source === "gpt"
+    ? `由 ${escapeHtml(agentPlan.textModel || "GPT")} 生成差异化方案。`
+    : agentPlan.fallbackReason === "error"
+      ? `AI 生成失败，已使用本地模板兜底：${escapeHtml(agentPlan.errorMessage || "接口返回错误")}`
+      : "当前未启用文本模型，已使用本地模板生成可预览方案。";
   const variantCards = agentPlan.variants.map((variant) => `
-    <article class="agent-variant-card" data-agent-variant="${escapeAttr(variant.id)}" role="button" tabindex="0">
+    <article class="agent-variant-card ${variant.id === previewAgentVariant ? "selected" : ""}" data-agent-variant="${escapeAttr(variant.id)}" role="button" tabindex="0" aria-selected="${variant.id === previewAgentVariant}">
       <strong>${escapeHtml(variant.title)}</strong>
       <p>${escapeHtml(variant.prompt).replace(/\n/g, "<br>")}</p>
-      <button type="button" data-agent-variant="${escapeAttr(variant.id)}">应用到提示词，可继续编辑</button>
+      <button type="button" data-agent-variant="${escapeAttr(variant.id)}">预览这套方案</button>
     </article>
   `).join("");
   els.agentWorkspace.innerHTML = `
@@ -1711,9 +1747,10 @@ function renderAgentGenerated() {
       <div class="agent-variant-grid">${variantCards}</div>
       <div class="agent-generated-notes">
         <span>不填写也会默认生成现代消费级${escapeHtml(selectedAgent.name)}方案。</span>
-        <span>${agentPlan.source === "gpt" ? `由 ${escapeHtml(agentPlan.textModel || "GPT")} 生成差异化方案。` : "已使用本地模板补全行业摄影语言、比例、负面提示词和质量检查项。"}</span>
-        <span>选择 variant 后系统会把提示词填入输入框，你可以继续编辑再点击生成。</span>
+        <span>${sourceLine}</span>
+        <span>点击上方方案只切换预览；点击下方“应用”按钮才会写入输入框。</span>
       </div>
+      ${skillNames.length ? `<div class="agent-tag-cloud">${skillNames.map((name) => `<span>${escapeHtml(name)}</span>`).join("")}</div>` : ""}
       <div class="agent-form-grid agent-form-grid-compact">
         <label><span>${escapeHtml(fields.subjectLabel || "主题名称 · 建议")}</span><input value="${escapeAttr(values.subject)}" readonly></label>
         <label><span>${escapeHtml(fields.materialLabel || "材质 / 风格")}</span><input value="${escapeAttr(values.material)}" readonly></label>
@@ -1722,6 +1759,7 @@ function renderAgentGenerated() {
     </div>
   `;
   setAgentFooter("generated");
+  syncAgentVariantActions();
 }
 
 function renderAgentPanel() {
@@ -1756,15 +1794,28 @@ async function generateAgentPlan() {
   try {
     agentPlan = await requestAgentPlan(nextValues, agentPlanRevision);
   } catch (err) {
+    const message = String(err.message || "");
+    const fallbackReason = message.includes("未配置") || message.includes("本地号池模式") ? "not-configured" : "error";
     agentPlan = {
       ...fallbackPlan,
-      brief: `${fallbackPlan.brief}\n\nGPT 方案生成未启用或失败，已使用本地模板兜底：${err.message}`,
+      brief: fallbackReason === "error"
+        ? `${fallbackPlan.brief}\n\nAI 方案生成失败，已使用本地模板兜底：${message}`
+        : fallbackPlan.brief,
       source: "local",
+      fallbackReason,
+      errorMessage: message,
     };
   } finally {
     els.applyAgent.disabled = false;
   }
+  previewAgentVariant = agentPlan.variants[0]?.id || "stable";
   agentGenerated = true;
+  renderAgentPanel();
+}
+
+function previewAgentVariantCard(variantId = "stable") {
+  if (!agentPlan?.variants?.some((item) => item.id === variantId)) return;
+  previewAgentVariant = variantId;
   renderAgentPanel();
 }
 
@@ -2394,11 +2445,20 @@ async function performSubmitJob(promptOverride = "") {
 function stopPreflight() {
   window.clearInterval(preflightTimer);
   preflightTimer = 0;
-  els.preflightGenerate?.classList.add("hidden");
+  if (els.preflightGenerate && !els.preflightGenerate.classList.contains("hidden")) {
+    els.preflightGenerate.classList.add("paused");
+    if (els.preflightSeconds) els.preflightSeconds.textContent = "0";
+    if (els.preflightText) els.preflightText.textContent = "已停止自动生成，可手动应用优化版或原样继续";
+    if (els.preflightProgress) els.preflightProgress.style.width = "0%";
+  } else {
+    els.preflightGenerate?.classList.add("hidden");
+  }
   if (!els.applyOptimizedPrompt) return;
   els.applyOptimizedPrompt.textContent = "✣ 应用优化提示词";
   els.applyOptimizedParams.textContent = "☷ 应用推荐参数";
-  els.continueOriginalPrompt?.classList.add("hidden");
+  if (!els.promptAnalysisCard || els.promptAnalysisCard.classList.contains("hidden")) {
+    els.continueOriginalPrompt?.classList.add("hidden");
+  }
 }
 
 function showPreflightGenerate() {
@@ -2409,6 +2469,7 @@ function showPreflightGenerate() {
   els.applyOptimizedParams.textContent = "☷ 应用推荐参数";
   els.continueOriginalPrompt?.classList.remove("hidden");
   els.preflightGenerate?.classList.remove("hidden");
+  els.preflightGenerate?.classList.remove("paused");
   let remaining = 10;
   const total = remaining;
   const agentName = selectedAgent ? `${selectedAgent.name} · ${variantLabel(appliedAgentVariant || "stable")}` : "优化版";
@@ -2862,6 +2923,18 @@ function showPromptAnalysis(mode = "optimize") {
   if (Number(els.count.value || 1) > 1) risks.push(`当前 ${els.count.value} 张，并发建议 ${recommendedConcurrency(els.count.value)}；过高并发可能触发上游限流。`);
   if (!selectedAgent) risks.push("未选择行业 Agent：建议用动态行业或固定行业补全场景、平台和负面提示词。");
   if (!els.prompt.value.trim()) risks.push("提示词为空：需要输入主题或先用动态行业生成默认方案。");
+  const warning = els.promptAnalysisCard?.querySelector(".analysis-warning");
+  if (warning) {
+    warning.querySelector("b").textContent = risks.length ? "预检发现可优化项" : "预检通过";
+    warning.querySelector("span").textContent = risks.length
+      ? risks.join(" ")
+      : "当前提示词、参数和参考图配置可以直接生成；如需更强控制，可先应用优化版再发送。";
+  }
+  const styleTags = els.promptAnalysisCard?.querySelector(".analysis-style-tags");
+  if (styleTags) {
+    const skills = selectedAgent ? selectedPromptSkills() : defaultPromptSkills.custom.map((id) => ({ id, ...(promptSkillLibrary[id] || {}) })).filter((item) => item.name);
+    styleTags.innerHTML = skills.slice(0, 4).map((item) => `<span>${escapeHtml(item.name)}</span>`).join("") || "<span>商业摄影</span><span>主体清晰</span><span>可交付</span>";
+  }
   els.analysisResultTitle.textContent = titles[mode] || titles.optimize;
   els.promptScore.textContent = String(Math.max(62, 92 - risks.length * 8));
   els.analysisAspect.textContent = els.aspectRatio.value;
@@ -3875,16 +3948,25 @@ els.applyCreativeAgent.addEventListener("click", () => applyAgentVariant("creati
 els.applyCommercialAgent.addEventListener("click", () => applyAgentVariant("commercial"));
 els.regenerateAgent.addEventListener("click", generateAgentPlan);
 els.disableAgent.addEventListener("click", disableSelectedAgent);
+els.model?.addEventListener("change", () => {
+  if (els.model.value) localStorage.setItem(SELECTED_IMAGE_MODEL_KEY, els.model.value);
+});
+els.analysisModel?.addEventListener("change", () => {
+  if (els.analysisModel.value) localStorage.setItem(SELECTED_TEXT_MODEL_KEY, els.analysisModel.value);
+});
+els.manualTextModel?.addEventListener("input", () => {
+  localStorage.setItem(MANUAL_TEXT_MODEL_KEY, els.manualTextModel.value.trim());
+});
 els.agentWorkspace.addEventListener("click", (event) => {
   const target = event.target.closest("[data-agent-variant]");
-  if (target) applyAgentVariant(target.dataset.agentVariant);
+  if (target) previewAgentVariantCard(target.dataset.agentVariant);
 });
 els.agentWorkspace.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   const target = event.target.closest("[data-agent-variant]");
   if (!target) return;
   event.preventDefault();
-  applyAgentVariant(target.dataset.agentVariant);
+  previewAgentVariantCard(target.dataset.agentVariant);
 });
 els.agentModal.addEventListener("click", (event) => {
   if (event.target === els.agentModal) setAgentPanel(false);
