@@ -443,7 +443,7 @@
         <section class="admin-debug-panel">
           <div>
             <strong>工作台调试模式</strong>
-            <p>开启后，管理员登录工作台时可直接使用下方后台配置的生图/文本 API；响应只返回调试状态，不下发 Key 明文。</p>
+            <p>开启后全局生效，所有工作台请求都可使用下方后台配置的生图/文本 API；响应只返回调试状态，不下发 Key 明文。</p>
           </div>
           <label class="admin-switch-row compact-switch">
             <span>{{ "已开启" if config.debug.workbench_custom_api else "未开启" }}</span>
@@ -455,7 +455,7 @@
         <div class="admin-card-head compact-head">
           <div>
             <h3>调试模型接入</h3>
-            <p>生图和文本可以分别配置 OpenAI 兼容地址与 Key。只有管理员已登录且开启工作台调试模式时，工作台才会使用后台配置；普通用户仍必须使用本地号池或填写自己的自定义 API Key。</p>
+            <p>生图和文本可以分别配置 OpenAI 兼容地址与 Key。工作台调试模式开启后全局生效，所有工作台请求都会优先使用后台配置，但接口不会下发 Key 明文。</p>
           </div>
         </div>
         <div class="admin-route-grid">
@@ -476,6 +476,18 @@
                   <span class="admin-field-head"><span>API Key 池</span><button type="button" data-admin-paste="{{ kind }}_route_api_keys">粘贴</button></span>
                   <textarea name="{{ kind }}_route_api_keys" rows="4" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="{{ route_key_masks[kind] or '每行一个 Key，留空并勾选保留则不变' }}"></textarea>
                 </label>
+                <div class="admin-key-summary admin-wide-field">
+                  <strong>已配置 {{ route_key_summaries[kind]|length }} 个 Key</strong>
+                  {% if route_key_summaries[kind] %}
+                    <div>
+                      {% for masked_key in route_key_summaries[kind] %}
+                        <span>{{ masked_key }}</span>
+                      {% endfor %}
+                    </div>
+                  {% else %}
+                    <small>暂无已保存 Key。</small>
+                  {% endif %}
+                </div>
                 <label class="admin-switch-row">
                   <span>保留现有 Key</span>
                   <span class="admin-switch"><input type="checkbox" name="keep_{{ kind }}_route_api_key" checked><span></span></span>

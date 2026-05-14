@@ -3662,6 +3662,34 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
   border-color: #9cc8af;
   background: var(--green-soft);
 }
+.admin-key-summary {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(17,17,17,.08);
+  border-radius: 8px;
+  background: #fff;
+}
+.admin-key-summary strong,
+.admin-key-summary small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+.admin-key-summary div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admin-key-summary span {
+  padding: 5px 8px;
+  border: 1px solid rgba(15, 111, 90, .16);
+  border-radius: 7px;
+  background: var(--green-soft);
+  color: #123a31;
+  font-size: 12px;
+  font-weight: 850;
+}
 .admin-route-fields textarea,
 .admin-model-textarea {
   resize: vertical;

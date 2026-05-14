@@ -427,7 +427,7 @@ def connection_endpoints() -> dict[str, str]:
 
 def custom_api_debug_enabled(config: dict | None = None) -> bool:
     config = config or read_model_config()
-    return bool(session.get("admin") is True and (config.get("debug") or {}).get("workbench_custom_api"))
+    return bool((config.get("debug") or {}).get("workbench_custom_api"))
 
 
 def custom_model_route(config: dict | None, kind: str, allow_fallback: bool = True, include_legacy: bool = True) -> dict:
@@ -479,16 +479,34 @@ def custom_model_route_credentials(
     return str(route.get("url") or "").strip(), api_key, route_kind
 
 
+def custom_model_route_key_pool(
+    config: dict | None = None,
+    kind: str = "image",
+    include_legacy: bool = True,
+) -> tuple[str, list[str], str]:
+    route = custom_model_route(config, kind, allow_fallback=True, include_legacy=include_legacy)
+    route_kind = "custom"
+    routes = (config or read_model_config()).get("custom_model_routes") or {}
+    for candidate in ("image", "text"):
+        if route is routes.get(candidate):
+            route_kind = candidate
+            break
+    keys = [str(key or "").strip() for key in route.get("api_keys", []) if str(key or "").strip()]
+    if not keys and route.get("api_key"):
+        keys = [str(route.get("api_key") or "").strip()]
+    return str(route.get("url") or "").strip(), keys, route_kind
+
+
 def admin_custom_api_credentials(config: dict | None = None) -> tuple[str, str]:
     config = config or read_model_config()
     api_url, api_key, _ = custom_model_route_credentials(config, "image")
     return api_url, api_key
 
 
-def public_model_config(config: dict | None = None, include_admin_debug: bool = False) -> dict:
+def public_model_config(config: dict | None = None, include_admin_debug: bool = True) -> dict:
     public = json.loads(json.dumps(config or read_model_config(), ensure_ascii=False))
     debug = public.get("debug") if isinstance(public.get("debug"), dict) else {}
-    debug_enabled = bool(include_admin_debug and debug.get("workbench_custom_api"))
+    debug_enabled = bool(debug.get("workbench_custom_api"))
     public["debug"] = {"workbench_custom_api": debug_enabled}
     custom = ((public.get("connections") or {}).get("custom") or {})
     raw_key = str(custom.pop("api_key", "") or "").strip()
@@ -620,6 +638,10 @@ def mask_secret(value: str, left: int = 8, right: int = 4) -> str:
     if len(value) <= left + right:
         return value[:2] + "***" if value else ""
     return f"{value[:left]}...{value[-right:]}"
+
+
+def mask_secret_list(values: list[str]) -> list[str]:
+    return [mask_secret(value) for value in values if str(value or "").strip()]
 
 
 SECRET_PATTERNS = [
@@ -2257,21 +2279,32 @@ def split_model_ids(models: list[str]) -> tuple[list[str], list[str]]:
 def fetch_custom_models_by_kind(kind: str, api_url: str, api_key: str) -> tuple[list[str], str, str]:
     config = read_model_config()
     debug_enabled = custom_api_debug_enabled(config)
-    route_url, route_key, route_kind = custom_model_route_credentials(config, kind, include_legacy=debug_enabled)
+    route_url, route_keys, route_kind = custom_model_route_key_pool(config, kind, include_legacy=debug_enabled)
     final_url = str(api_url or "").strip() or (route_url if debug_enabled else "")
-    final_key = str(api_key or "").strip()
-    if debug_enabled and not final_key:
-        final_key = route_key
+    request_key = str(api_key or "").strip()
+    final_keys = [request_key] if request_key else (route_keys if debug_enabled else [])
     if not final_url:
         raise ValueError("请先填写自定义 API URL")
-    if not final_key:
+    if not final_keys:
         raise ValueError("请先填写 API Key")
+    merged_models = []
     errors = []
-    for candidate in candidate_api_urls("custom", final_url):
-        try:
-            return fetch_models(candidate, final_key), candidate.rstrip("/"), route_kind
-        except Exception as exc:
-            errors.append(redact_secrets(f"{candidate}: {exc}"))
+    resolved_url = ""
+    for key_index, final_key in enumerate(final_keys, 1):
+        key_success = False
+        for candidate in candidate_api_urls("custom", final_url):
+            try:
+                models = fetch_models(candidate, final_key)
+                unique_extend(merged_models, models)
+                resolved_url = candidate.rstrip("/")
+                key_success = True
+                break
+            except Exception as exc:
+                errors.append(redact_secrets(f"Key {key_index} {mask_secret(final_key)} @ {candidate}: {exc}"))
+        if key_success:
+            continue
+    if merged_models:
+        return merged_models, resolved_url or final_url.rstrip("/"), route_kind
     raise RuntimeError(redact_secrets(" | ".join(errors) or "模型读取失败"))
 
 
@@ -2697,7 +2730,7 @@ def index():
         username=read_admin_auth()["username"],
         models=models,
         default_model=default_model,
-        model_config=public_model_config(model_config, include_admin_debug=session.get("admin") is True),
+        model_config=public_model_config(model_config),
     )
 
 
@@ -3133,6 +3166,10 @@ def admin():
             kind: mask_secret(((config.get("custom_model_routes") or {}).get(kind) or {}).get("api_key") or "")
             for kind in ("image", "text")
         },
+        route_key_summaries={
+            kind: mask_secret_list(((config.get("custom_model_routes") or {}).get(kind) or {}).get("api_keys") or [])
+            for kind in ("image", "text")
+        },
         profile_lines=profile_lines,
         profile_model_ids=profile_model_ids,
         profile_image_models=profile_image_models,
@@ -3166,7 +3203,7 @@ def health():
         "ok": True,
         "models": available_model_ids(),
         "new_api_base": NEW_API_BASE,
-        "model_config": public_model_config(read_model_config(), include_admin_debug=session.get("admin") is True),
+        "model_config": public_model_config(read_model_config()),
     })
 
 
@@ -3225,7 +3262,7 @@ def state():
         "presets": read_presets(),
         "models": available_model_ids(),
         "default_model": DEFAULT_MODEL,
-        "model_config": public_model_config(read_model_config(), include_admin_debug=session.get("admin") is True),
+        "model_config": public_model_config(read_model_config()),
         "account_pool": account_stats(read_account_pool()),
         "pool_user": public_pool_user(current_pool_user()),
         "pool_users": pool_user_stats(read_pool_users()),
