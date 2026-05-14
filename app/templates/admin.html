@@ -532,6 +532,10 @@
                   <span>启用</span>
                   <span class="admin-switch"><input type="checkbox" name="provider_enabled" value="{{ provider.id }}" {% if provider.enabled %}checked{% endif %}><span></span></span>
                 </label>
+                <label class="admin-delete-check">
+                  <input type="checkbox" name="provider_delete" value="{{ provider.id }}">
+                  <span>删除</span>
+                </label>
               </article>
             {% endfor %}
             <article class="admin-provider-row admin-provider-new">

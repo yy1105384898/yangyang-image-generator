@@ -2866,11 +2866,14 @@ def admin():
             provider_kinds = request.form.getlist("provider_kind")
             provider_patterns_list = request.form.getlist("provider_patterns")
             enabled_provider_ids = set(request.form.getlist("provider_enabled"))
+            deleted_provider_ids = set(request.form.getlist("provider_delete"))
             for index, provider_id in enumerate(provider_ids):
                 name = provider_names[index].strip() if index < len(provider_names) else ""
                 kind = provider_kinds[index].strip() if index < len(provider_kinds) else "image"
                 patterns = provider_patterns_list[index].strip() if index < len(provider_patterns_list) else ""
                 provider_id = provider_id.strip() or re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or uuid.uuid4().hex[:10]
+                if provider_id in deleted_provider_ids:
+                    continue
                 if not name or not patterns:
                     continue
                 model_providers.append({

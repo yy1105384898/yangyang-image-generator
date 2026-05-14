@@ -3741,7 +3741,7 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
 }
 .admin-provider-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 120px auto;
+  grid-template-columns: minmax(160px, 1fr) 120px auto auto;
   gap: 10px;
   align-items: end;
   padding: 12px;
@@ -3768,6 +3768,26 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
 .admin-provider-new {
   border-style: dashed;
   background: #fbfbfa;
+}
+.admin-delete-check {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid rgba(180, 45, 33, .22);
+  border-radius: 8px;
+  background: var(--red-soft);
+  color: var(--red) !important;
+  font-size: 12px;
+  font-weight: 880;
+  white-space: nowrap;
+}
+.admin-delete-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--red);
 }
 .admin-switch input {
   position: absolute;
