@@ -307,7 +307,7 @@
             <h3>同步说明</h3>
             <p class="admin-help-text">读取列表时只展示账号摘要；点击导入后，后端才会逐个读取账号详情里的 access_token，并写入本地号池。</p>
             <p class="admin-help-text">支持两种认证：管理员邮箱密码登录，或直接使用 Sub2API Admin API Key。</p>
-            <p class="admin-help-text">如果 YANGYANGAPI 和 Sub2API 都在同一台 Docker 主机，服务地址可优先填 <code>http://host.docker.internal:8091</code>；填宿主机局域网 IP 时，容器可能因 macvlan 无法回连宿主机。</p>
+            <p class="admin-help-text">如果 YANGYANGAPI 和 Sub2API 都在同一台 Docker 主机，服务地址可优先填 <code>http://host.docker.internal:8091</code>；填宿主机局域网 IP 时请确认 NAS 防火墙和 Docker 网络允许容器访问。</p>
             <p class="admin-help-text">导入后可回到“号池管理”刷新邮箱、套餐和生图额度。</p>
           </section>
         </div>
@@ -464,6 +464,42 @@
                   <p class="admin-help-text">打开后，工作台自定义 API 可直接使用后台保存的 URL 和 Key；接口响应只返回调试状态，不下发 Key 明文。</p>
                 {% endif %}
                 <label class="admin-wide-field">描述<textarea name="{{ key }}_description" rows="3">{{ conn.description }}</textarea></label>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+        <div class="admin-card-head compact-head">
+          <div>
+            <h3>调试模型接入</h3>
+            <p>生图和文本可以分别配置 OpenAI 兼容地址与 Key。只有管理员已登录且开启工作台调试模式时，工作台才会使用后台配置；普通用户仍必须使用本地号池或填写自己的自定义 API Key。</p>
+          </div>
+        </div>
+        <div class="admin-route-grid">
+          {% for kind, title in [("image", "生图模型接入"), ("text", "文本模型接入")] %}
+            {% set route = config.custom_model_routes[kind] %}
+            <article class="admin-route-item">
+              <div class="admin-route-title">
+                <strong>{{ title }}</strong>
+                <label class="admin-switch-row compact-switch">
+                  <span>启用</span>
+                  <span class="admin-switch"><input type="checkbox" name="{{ kind }}_route_enabled" {% if route.enabled %}checked{% endif %}><span></span></span>
+                </label>
+              </div>
+              <div class="admin-route-fields">
+                <label>显示名称<input name="{{ kind }}_route_label" value="{{ route.label or title }}"></label>
+                <label class="admin-wide-field">API URL<input name="{{ kind }}_route_url" value="{{ route.url }}" placeholder="https://your-api.example.com/v1"></label>
+                <label class="admin-wide-field">API Key 池<textarea name="{{ kind }}_route_api_keys" rows="4" placeholder="{{ route_key_masks[kind] or '每行一个 Key，留空并勾选保留则不变' }}"></textarea></label>
+                <label class="admin-switch-row">
+                  <span>保留现有 Key</span>
+                  <span class="admin-switch"><input type="checkbox" name="keep_{{ kind }}_route_api_key" checked><span></span></span>
+                </label>
+                <p class="admin-help-text">
+                  {% if kind == "image" %}
+                    只用于管理员调试时读取和调用生图模型；工作台模型下拉会过滤为 gpt-image、imagen、flux 等生图模型。多 Key 并发建议优先使用本地号池。
+                  {% else %}
+                    只用于管理员调试时生成 Agent 方案；工作台文本模型下拉会过滤为 GPT、Claude、DeepSeek、Qwen 等对话模型。
+                  {% endif %}
+                </p>
               </div>
             </article>
           {% endfor %}

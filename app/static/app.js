@@ -305,12 +305,13 @@ const CUSTOM_API_URL_KEY = "yangyang_image_custom_api_url";
 const SELECTED_IMAGE_MODEL_KEY = "yangyang_image_selected_model";
 const SELECTED_TEXT_MODEL_KEY = "yangyang_image_selected_text_model";
 const MANUAL_TEXT_MODEL_KEY = "yangyang_image_manual_text_model";
-const DEBUG_CUSTOM_API_KEY = "yangyang_image_debug_custom_api";
 const ALLOWED_CONNECTION_MODES = new Set(["custom", "pool"]);
 let debugCustomApi = {
   enabled: Boolean(modelConfig.debug?.workbench_custom_api),
   apiUrl: "",
   hasApiKey: Boolean(modelConnections.custom?.api_key_configured),
+  image: { apiUrl: "", hasApiKey: false, routeKind: "" },
+  text: { apiUrl: "", hasApiKey: false, routeKind: "" },
 };
 
 const connectionNotes = {
@@ -463,6 +464,24 @@ const promptSkillLibrary = {
     desc: "封面、界面、设备、发布场景",
     instruction: "使用案例灵感：把界面、设备样机、封面构图和社媒发布场景结合，突出可点击的第一屏视觉，保留标题或按钮安全区。",
   },
+  caseFormulaPrompt: {
+    group: "case",
+    name: "案例 · 提示词配方",
+    desc: "把主题拆成主体、动作、环境、镜头、光线",
+    instruction: "使用提示词配方技法：按“主体身份 + 动作状态 + 环境语境 + 镜头距离 + 光线质感 + 构图留白 + 交付平台”组织画面，避免只堆风格词；每套方案必须替换至少两个画面变量。",
+  },
+  caseVisualMetaphor: {
+    group: "case",
+    name: "案例 · 视觉隐喻",
+    desc: "把抽象卖点变成可见装置或场景",
+    instruction: "使用视觉隐喻技法：把效率、安全、轻盈、修复、增长、清洁、智能等抽象卖点变成可看见的装置、空间关系、对比状态或动作结果，主体仍然是画面核心。",
+  },
+  caseMultiAngleSet: {
+    group: "case",
+    name: "案例 · 多角度套图",
+    desc: "英雄图、细节图、场景图形成一组",
+    instruction: "使用多角度套图技法：同一主体生成英雄主图、局部细节、使用场景和商业 KV 四类画面逻辑，保证主体外观一致，避免每张像不同产品。",
+  },
   characterConsistency: {
     group: "case",
     name: "角色一致性",
@@ -490,15 +509,15 @@ const promptSkillGroups = [
 ];
 
 const defaultPromptSkills = {
-  commerce: ["productHero", "benefitVisual", "macroDetail", "caseMiniatureDiorama", "referenceRestage"],
-  xiaohongshu: ["coverHook", "lifestyleScene", "flatlayKit", "caseSocialMockup", "beforeAfter"],
-  "short-video": ["coverHook", "caseStoryboardGrid", "beforeAfter", "lifestyleScene", "benefitVisual"],
-  poster: ["kvLayout", "casePosterNarrative", "benefitVisual", "premiumLuxury", "infographic"],
+  commerce: ["productHero", "benefitVisual", "macroDetail", "caseMiniatureDiorama", "caseMultiAngleSet", "referenceRestage"],
+  xiaohongshu: ["coverHook", "lifestyleScene", "flatlayKit", "caseSocialMockup", "caseFormulaPrompt", "beforeAfter"],
+  "short-video": ["coverHook", "caseStoryboardGrid", "caseVisualMetaphor", "beforeAfter", "lifestyleScene", "benefitVisual"],
+  poster: ["kvLayout", "casePosterNarrative", "caseVisualMetaphor", "benefitVisual", "premiumLuxury", "infographic"],
   interior: ["lifestyleScene", "premiumLuxury", "benefitVisual", "ugcReal", "referenceRestage"],
   portrait: ["premiumLuxury", "characterConsistency", "lifestyleScene", "coverHook", "ugcReal"],
-  food: ["productHero", "macroDetail", "caseStoryboardGrid", "lifestyleScene", "coverHook"],
-  saas: ["uiMockup", "caseSocialMockup", "kvLayout", "infographic", "benefitVisual"],
-  custom: ["productHero", "benefitVisual", "referenceRestage", "caseStoryboardGrid", "kvLayout"],
+  food: ["productHero", "macroDetail", "caseStoryboardGrid", "lifestyleScene", "caseFormulaPrompt", "coverHook"],
+  saas: ["uiMockup", "caseSocialMockup", "kvLayout", "infographic", "caseVisualMetaphor", "benefitVisual"],
+  custom: ["productHero", "benefitVisual", "referenceRestage", "caseStoryboardGrid", "caseFormulaPrompt", "kvLayout"],
 };
 
 const industryAgents = [
@@ -824,6 +843,8 @@ function normalizeGenerationNumbers() {
   const count = clampNumberInput(els.count, 1, 1, 20);
   const concurrency = clampNumberInput(els.concurrency, 2, 1, 6);
   const retryLimit = clampNumberInput(els.retryLimit, 2, 0, 5);
+  if (els.quickCount) els.quickCount.value = String(count);
+  if (els.quickConcurrency) els.quickConcurrency.value = String(concurrency);
   return { count, concurrency, retryLimit };
 }
 
@@ -931,7 +952,7 @@ function renderDebugApiState() {
   const active = Boolean(isCustom && debugCustomApi.enabled);
   els.debugApiBanner?.classList.toggle("hidden", !active);
   if (active && els.apiUrl) {
-    els.apiUrl.value = debugCustomApi.apiUrl || connectionEndpoints.custom || els.apiUrl.value;
+    els.apiUrl.value = debugCustomApi.image?.apiUrl || debugCustomApi.apiUrl || connectionEndpoints.custom || els.apiUrl.value;
   }
   if (els.apiKey) {
     const useBackendKey = active && debugCustomApi.hasApiKey;
@@ -953,8 +974,16 @@ function selectedApiUrl() {
 
 function selectedApiKey() {
   if (els.connectionMode.value === "pool") return "";
-  if (debugCustomApi.enabled && debugCustomApi.hasApiKey) return "";
+  if (adminDebugApiActive()) return "";
   return els.apiKey.value.trim();
+}
+
+function adminDebugApiActive() {
+  return Boolean(els.connectionMode.value === "custom" && debugCustomApi.enabled && debugCustomApi.hasApiKey);
+}
+
+function debugTextRouteActive() {
+  return Boolean(els.connectionMode.value === "custom" && debugCustomApi.enabled && debugCustomApi.text?.hasApiKey);
 }
 
 function loadApiKeyPreference() {
@@ -967,7 +996,7 @@ function loadApiKeyPreference() {
 
 function saveApiKeyPreference() {
   if (els.connectionMode.value === "pool") return;
-  if (debugCustomApi.enabled) return;
+  if (adminDebugApiActive()) return;
   if (els.connectionMode.value === "custom" && els.apiUrl.value.trim()) {
     localStorage.setItem(CUSTOM_API_URL_KEY, els.apiUrl.value.trim());
   }
@@ -1310,7 +1339,15 @@ function syncTextModelFields() {
     els.textApiKeyField.classList.toggle("hidden", Boolean(els.reuseTextApiKey?.checked));
   }
   if (els.textApiUrl && els.reuseTextApiUrl?.checked) {
-    els.textApiUrl.value = selectedApiUrl();
+    els.textApiUrl.value = debugTextRouteActive() ? (debugCustomApi.text?.apiUrl || selectedApiUrl()) : selectedApiUrl();
+  }
+  if (els.textApiKey) {
+    const useBackendTextKey = debugTextRouteActive();
+    els.textApiKey.disabled = useBackendTextKey;
+    if (useBackendTextKey) els.textApiKey.value = "";
+    els.textApiKey.placeholder = useBackendTextKey
+      ? "调试中无需填写，后端使用管理后台文本 Key"
+      : "填写有 GPT 文本模型权限的 Key";
   }
 }
 
@@ -1349,10 +1386,12 @@ function selectedTextModel() {
 }
 
 function selectedTextApiUrl() {
+  if (debugTextRouteActive()) return (debugCustomApi.text?.apiUrl || selectedApiUrl()).trim();
   return (els.reuseTextApiUrl?.checked ? selectedApiUrl() : els.textApiUrl?.value || "").trim();
 }
 
 function selectedTextApiKey() {
+  if (debugTextRouteActive()) return "";
   return (els.reuseTextApiKey?.checked ? selectedApiKey() : els.textApiKey?.value || "").trim();
 }
 
@@ -2553,9 +2592,24 @@ async function loadState() {
   state = await api("/api/state");
   const debug = state.model_config?.debug || {};
   const custom = state.model_config?.connections?.custom || {};
+  const routes = state.model_config?.custom_model_routes || {};
   debugCustomApi.enabled = Boolean(debug.workbench_custom_api);
-  debugCustomApi.apiUrl = debugCustomApi.enabled ? (custom.url || "") : "";
-  debugCustomApi.hasApiKey = Boolean(debugCustomApi.enabled && custom.api_key_configured);
+  const imageRoute = routes.image || {};
+  const textRoute = routes.text || {};
+  const imageFallbackRoute = imageRoute.enabled ? imageRoute : (textRoute.enabled ? textRoute : {});
+  const textFallbackRoute = textRoute.enabled ? textRoute : (imageRoute.enabled ? imageRoute : {});
+  debugCustomApi.image = {
+    apiUrl: debugCustomApi.enabled ? (imageFallbackRoute.url || custom.url || "") : "",
+    hasApiKey: Boolean(debugCustomApi.enabled && (imageFallbackRoute.api_key_configured || custom.api_key_configured)),
+    routeKind: imageRoute.enabled ? "image" : (textRoute.enabled ? "text" : ""),
+  };
+  debugCustomApi.text = {
+    apiUrl: debugCustomApi.enabled ? (textFallbackRoute.url || debugCustomApi.image.apiUrl || "") : "",
+    hasApiKey: Boolean(debugCustomApi.enabled && (textFallbackRoute.api_key_configured || debugCustomApi.image.hasApiKey)),
+    routeKind: textRoute.enabled ? "text" : debugCustomApi.image.routeKind,
+  };
+  debugCustomApi.apiUrl = debugCustomApi.image.apiUrl;
+  debugCustomApi.hasApiKey = debugCustomApi.image.hasApiKey;
   renderDebugApiState();
   renderState();
 }
@@ -2729,7 +2783,7 @@ async function refreshModels({ silent = false } = {}) {
     return;
   }
   const apiKey = selectedApiKey();
-  if (!apiKey && !(debugCustomApi.enabled && debugCustomApi.hasApiKey)) {
+  if (!apiKey && !adminDebugApiActive()) {
     verifiedImageModels = [];
     verifiedTextModels = [];
     replaceModelOptions([]);
@@ -2752,6 +2806,7 @@ async function refreshModels({ silent = false } = {}) {
         connection_mode: els.connectionMode.value,
         api_url: selectedApiUrl(),
         api_key: selectedApiKey(),
+        model_kind: adminDebugApiActive() ? "both" : "image",
       }),
     });
     if (requestId !== modelRequestId) return;
@@ -4217,7 +4272,7 @@ initResearchWorkbench();
 if (!location.hash) location.hash = "#home";
 applyRoute();
 loadState().then(() => {
-  if (selectedApiKey() || (debugCustomApi.enabled && debugCustomApi.hasApiKey)) {
+  if (selectedApiKey() || adminDebugApiActive()) {
     scheduleAutoRefreshModels();
   } else {
     renderAvailableModels();

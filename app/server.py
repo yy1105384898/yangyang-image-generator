@@ -123,6 +123,22 @@ def default_model_config() -> dict:
             "reuse_custom_api": True,
             "reuse_custom_key": True,
         },
+        "custom_model_routes": {
+            "image": {
+                "label": "生图模型接入",
+                "url": "",
+                "api_key": "",
+                "api_keys": [],
+                "enabled": False,
+            },
+            "text": {
+                "label": "文本模型接入",
+                "url": "",
+                "api_key": "",
+                "api_keys": [],
+                "enabled": False,
+            },
+        },
         "debug": {
             "workbench_custom_api": False,
         },
@@ -166,6 +182,35 @@ def normalize_model_config(raw: dict | None = None) -> dict:
         "reuse_custom_api": bool(agent_text.get("reuse_custom_api", True)),
         "reuse_custom_key": bool(agent_text.get("reuse_custom_key", True)),
     }
+    raw_routes = raw.get("custom_model_routes") if isinstance(raw.get("custom_model_routes"), dict) else {}
+    legacy_custom = connections.get("custom", {})
+    for kind in ("image", "text"):
+        route_raw = raw_routes.get(kind) if isinstance(raw_routes.get(kind), dict) else {}
+        route = {**base["custom_model_routes"][kind], **route_raw}
+        route["label"] = str(route.get("label") or base["custom_model_routes"][kind]["label"]).strip()
+        route["url"] = str(route.get("url") or "").strip()
+        keys = []
+        for value in route.get("api_keys") or []:
+            value = str(value or "").strip()
+            if value:
+                keys.append(value)
+        legacy_key = str(route.get("api_key") or "").strip()
+        if legacy_key and legacy_key not in keys:
+            keys.insert(0, legacy_key)
+        route["api_keys"] = keys
+        route["api_key"] = keys[0] if keys else ""
+        route["enabled"] = bool(route.get("enabled", False))
+        base["custom_model_routes"][kind] = route
+    if legacy_custom.get("url") or legacy_custom.get("api_key"):
+        image_route = base["custom_model_routes"]["image"]
+        if not image_route.get("url"):
+            image_route["url"] = str(legacy_custom.get("url") or "").strip()
+        if not image_route.get("api_key"):
+            image_route["api_key"] = str(legacy_custom.get("api_key") or "").strip()
+        if image_route.get("api_key") and image_route.get("api_key") not in image_route.get("api_keys", []):
+            image_route["api_keys"] = [image_route["api_key"], *image_route.get("api_keys", [])]
+        if not raw_routes.get("image"):
+            image_route["enabled"] = True
     debug = raw.get("debug") if isinstance(raw.get("debug"), dict) else {}
     base["debug"] = {
         **base["debug"],
@@ -185,6 +230,23 @@ def read_model_config() -> dict:
 
 def write_model_config(config: dict) -> None:
     write_json(MODEL_CONFIG_FILE, normalize_model_config(config))
+
+
+def parse_secret_lines(value: str) -> list[str]:
+    keys = []
+    for line in str(value or "").splitlines():
+        key = line.strip()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def merge_route_secrets(current_routes: dict, kind: str, posted: str, keep_existing: bool) -> list[str]:
+    current = current_routes.get(kind) if isinstance(current_routes.get(kind), dict) else {}
+    posted_keys = parse_secret_lines(posted)
+    if keep_existing and not posted_keys:
+        return [str(key or "").strip() for key in current.get("api_keys", []) if str(key or "").strip()]
+    return posted_keys
 
 
 def read_admin_auth() -> dict:
@@ -306,20 +368,84 @@ def connection_endpoints() -> dict[str, str]:
 
 def custom_api_debug_enabled(config: dict | None = None) -> bool:
     config = config or read_model_config()
-    return bool((config.get("debug") or {}).get("workbench_custom_api"))
+    return bool(session.get("admin") is True and (config.get("debug") or {}).get("workbench_custom_api"))
+
+
+def custom_model_route(config: dict | None, kind: str, allow_fallback: bool = True, include_legacy: bool = True) -> dict:
+    config = config or read_model_config()
+    routes = config.get("custom_model_routes") or {}
+    route = routes.get(kind) if isinstance(routes.get(kind), dict) else {}
+    if route.get("enabled") and (route.get("url") or route.get("api_key")):
+        return route
+    if allow_fallback:
+        fallback_kind = "text" if kind == "image" else "image"
+        fallback = routes.get(fallback_kind) if isinstance(routes.get(fallback_kind), dict) else {}
+        if fallback.get("enabled") and (fallback.get("url") or fallback.get("api_key")):
+            return fallback
+    if not include_legacy:
+        return {
+            "label": "自定义 API",
+            "url": "",
+            "api_key": "",
+            "api_keys": [],
+            "enabled": False,
+        }
+    custom = (config.get("connections") or {}).get("custom") or {}
+    return {
+        "label": custom.get("label") or "自定义 API",
+        "url": custom.get("url") or "",
+        "api_key": custom.get("api_key") or "",
+        "api_keys": [custom.get("api_key")] if custom.get("api_key") else [],
+        "enabled": True,
+    }
+
+
+def custom_model_route_credentials(
+    config: dict | None = None,
+    kind: str = "image",
+    index: int = 0,
+    include_legacy: bool = True,
+) -> tuple[str, str, str]:
+    route = custom_model_route(config, kind, allow_fallback=True, include_legacy=include_legacy)
+    route_kind = "custom"
+    routes = (config or read_model_config()).get("custom_model_routes") or {}
+    for candidate in ("image", "text"):
+        if route is routes.get(candidate):
+            route_kind = candidate
+            break
+    keys = [str(key or "").strip() for key in route.get("api_keys", []) if str(key or "").strip()]
+    if not keys and route.get("api_key"):
+        keys = [str(route.get("api_key") or "").strip()]
+    api_key = keys[index % len(keys)] if keys else ""
+    return str(route.get("url") or "").strip(), api_key, route_kind
 
 
 def admin_custom_api_credentials(config: dict | None = None) -> tuple[str, str]:
     config = config or read_model_config()
-    custom = (config.get("connections") or {}).get("custom") or {}
-    return str(custom.get("url") or "").strip(), str(custom.get("api_key") or "").strip()
+    api_url, api_key, _ = custom_model_route_credentials(config, "image")
+    return api_url, api_key
 
 
-def public_model_config(config: dict | None = None) -> dict:
+def public_model_config(config: dict | None = None, include_admin_debug: bool = False) -> dict:
     public = json.loads(json.dumps(config or read_model_config(), ensure_ascii=False))
+    debug = public.get("debug") if isinstance(public.get("debug"), dict) else {}
+    debug_enabled = bool(include_admin_debug and debug.get("workbench_custom_api"))
+    public["debug"] = {"workbench_custom_api": debug_enabled}
     custom = ((public.get("connections") or {}).get("custom") or {})
     raw_key = str(custom.pop("api_key", "") or "").strip()
-    custom["api_key_configured"] = bool(raw_key)
+    custom["api_key_configured"] = bool(debug_enabled and raw_key)
+    if not debug_enabled:
+        custom["url"] = ""
+    routes = public.get("custom_model_routes") if isinstance(public.get("custom_model_routes"), dict) else {}
+    for route in routes.values():
+        if not isinstance(route, dict):
+            continue
+        raw_route_key = str(route.pop("api_key", "") or "").strip()
+        route.pop("api_keys", None)
+        route["api_key_configured"] = bool(debug_enabled and raw_route_key)
+        if not debug_enabled:
+            route["url"] = ""
+            route["enabled"] = False
     return public
 
 
@@ -342,17 +468,19 @@ def merge_secret_field(current: str, posted: str) -> str:
     return posted if posted else str(current or "").strip()
 
 
-def resolve_custom_api_credentials(api_url: str, api_key: str) -> tuple[str, str, bool]:
+def resolve_custom_api_credentials(api_url: str, api_key: str, kind: str = "image") -> tuple[str, str, bool, str]:
     config = read_model_config()
-    admin_url, admin_key = admin_custom_api_credentials(config)
     debug_enabled = custom_api_debug_enabled(config)
-    resolved_url = str(api_url or "").strip() or admin_url
+    admin_url, admin_key, route_kind = custom_model_route_credentials(config, kind, include_legacy=debug_enabled)
+    resolved_url = str(api_url or "").strip()
+    if debug_enabled and not resolved_url:
+        resolved_url = admin_url
     resolved_key = str(api_key or "").strip()
     used_debug_key = False
     if debug_enabled and not resolved_key and admin_key:
         resolved_key = admin_key
         used_debug_key = True
-    return resolved_url, resolved_key, used_debug_key
+    return resolved_url, resolved_key, used_debug_key, route_kind
 
 
 def available_model_ids() -> list[str]:
@@ -2017,6 +2145,27 @@ def split_model_ids(models: list[str]) -> tuple[list[str], list[str]]:
     return image_models, text_models
 
 
+def fetch_custom_models_by_kind(kind: str, api_url: str, api_key: str) -> tuple[list[str], str, str]:
+    config = read_model_config()
+    debug_enabled = custom_api_debug_enabled(config)
+    route_url, route_key, route_kind = custom_model_route_credentials(config, kind, include_legacy=debug_enabled)
+    final_url = str(api_url or "").strip() or (route_url if debug_enabled else "")
+    final_key = str(api_key or "").strip()
+    if debug_enabled and not final_key:
+        final_key = route_key
+    if not final_url:
+        raise ValueError("请先填写自定义 API URL")
+    if not final_key:
+        raise ValueError("请先填写 API Key")
+    errors = []
+    for candidate in candidate_api_urls("custom", final_url):
+        try:
+            return fetch_models(candidate, final_key), candidate.rstrip("/"), route_kind
+        except Exception as exc:
+            errors.append(redact_secrets(f"{candidate}: {exc}"))
+    raise RuntimeError(redact_secrets(" | ".join(errors) or "模型读取失败"))
+
+
 def resolve_api_url(connection_mode: str, api_url: str, api_key: str) -> tuple[str, list[str]]:
     errors = []
     for candidate in candidate_api_urls(connection_mode, api_url):
@@ -2188,8 +2337,13 @@ def call_agent_text_model_with_pool(model: str, payload: dict) -> dict:
 def generate_one(job: dict, prompt: str, index: int) -> list[dict]:
     if str(job.get("connection_mode") or "").strip() == "pool":
         return generate_one_with_pool(job, prompt, index)
-    headers = {"Authorization": bearer_token(str(job.get("api_key") or ""))}
     api_base = job_api_base(job)
+    api_key = str(job.get("api_key") or "")
+    if job.get("api_key_source") == "debug_admin_config":
+        route_url, route_key, _route_kind = custom_model_route_credentials(read_model_config(), "image", index)
+        api_base = normalize_api_base(route_url or api_base)
+        api_key = route_key or api_key
+    headers = {"Authorization": bearer_token(api_key)}
     reference_ids = job.get("reference_ids") or []
     references = [r for r in read_references() if r.get("id") in reference_ids]
     use_edit = job.get("edit_mode") and references
@@ -2333,7 +2487,7 @@ def index():
         username=read_admin_auth()["username"],
         models=models,
         default_model=default_model,
-        model_config=public_model_config(model_config),
+        model_config=public_model_config(model_config, include_admin_debug=session.get("admin") is True),
     )
 
 
@@ -2470,6 +2624,21 @@ def admin():
                     posted_key = request.form.get("custom_api_key", "").strip()
                     keep_existing = request.form.get("keep_custom_api_key") == "on"
                     connections[key]["api_key"] = existing.get("api_key", "") if keep_existing and not posted_key else posted_key
+            current_routes = current.get("custom_model_routes") or {}
+            custom_model_routes = {}
+            for kind in ("image", "text"):
+                custom_model_routes[kind] = {
+                    "label": request.form.get(f"{kind}_route_label", "生图模型接入" if kind == "image" else "文本模型接入").strip(),
+                    "url": request.form.get(f"{kind}_route_url", "").strip(),
+                    "api_keys": merge_route_secrets(
+                        current_routes,
+                        kind,
+                        request.form.get(f"{kind}_route_api_keys", ""),
+                        request.form.get(f"keep_{kind}_route_api_key") == "on",
+                    ),
+                    "enabled": request.form.get(f"{kind}_route_enabled") == "on",
+                }
+                custom_model_routes[kind]["api_key"] = custom_model_routes[kind]["api_keys"][0] if custom_model_routes[kind]["api_keys"] else ""
             profiles = []
             for line in request.form.get("model_profiles", "").splitlines():
                 parts = [part.strip() for part in line.split("|")]
@@ -2485,6 +2654,7 @@ def admin():
                 "default_connection_mode": request.form.get("default_connection_mode", "custom"),
                 "auto_order": [],
                 "connections": connections,
+                "custom_model_routes": custom_model_routes,
                 "model_profiles": profiles,
                 "debug": {
                     "workbench_custom_api": request.form.get("workbench_custom_api_debug") == "on",
@@ -2708,6 +2878,10 @@ def admin():
         "admin.html",
         config=config,
         custom_api_key_mask=mask_secret(admin_custom_api_credentials(config)[1]),
+        route_key_masks={
+            kind: mask_secret(((config.get("custom_model_routes") or {}).get(kind) or {}).get("api_key") or "")
+            for kind in ("image", "text")
+        },
         profile_lines=profile_lines,
         saved=saved,
         message=message,
@@ -2734,7 +2908,12 @@ def media_file(filename):
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True, "models": available_model_ids(), "new_api_base": NEW_API_BASE, "model_config": public_model_config(read_model_config())})
+    return jsonify({
+        "ok": True,
+        "models": available_model_ids(),
+        "new_api_base": NEW_API_BASE,
+        "model_config": public_model_config(read_model_config(), include_admin_debug=session.get("admin") is True),
+    })
 
 
 @app.get("/api/pool/session")
@@ -2792,7 +2971,7 @@ def state():
         "presets": read_presets(),
         "models": available_model_ids(),
         "default_model": DEFAULT_MODEL,
-        "model_config": public_model_config(read_model_config()),
+        "model_config": public_model_config(read_model_config(), include_admin_debug=session.get("admin") is True),
         "account_pool": account_stats(read_account_pool()),
         "pool_user": public_pool_user(current_pool_user()),
         "pool_users": pool_user_stats(read_pool_users()),
@@ -2807,14 +2986,11 @@ def models():
     payload = request.get_json(silent=True) or {}
     api_key = str(payload.get("api_key") or "").strip()
     connection_mode = str(payload.get("connection_mode") or "custom").strip()
+    model_kind = str(payload.get("model_kind") or "image").strip()
+    if model_kind not in {"image", "text", "both"}:
+        model_kind = "image"
     pool_user = None
     api_url = str(payload.get("api_url") or "").strip()
-    if connection_mode == "custom":
-        api_url, api_key, _used_debug_key = resolve_custom_api_credentials(api_url, api_key)
-        if not api_url:
-            return jsonify({"error": "请先填写自定义 API URL"}), 400
-        if not (api_key or NEW_API_TOKEN):
-            return jsonify({"error": "请先填写 API Key"}), 400
     if connection_mode == "pool":
         pool_user, pool_error = require_pool_user_json()
         if pool_error:
@@ -2827,23 +3003,39 @@ def models():
             "account_pool": stats,
             "pool_user": public_pool_user(pool_user),
         })
-    errors = []
-    for candidate in candidate_api_urls(connection_mode, api_url):
-        try:
-            model_list = fetch_models(candidate, api_key)
-            image_models, text_models = split_model_ids(model_list)
-            return jsonify({
-                "ok": True,
-                "models": model_list,
-                "image_models": image_models,
-                "text_models": text_models,
-                "api_url": candidate.rstrip("/"),
-            })
-        except Exception as exc:
-            errors.append(redact_secrets(f"{candidate}: {exc}"))
-    return jsonify({"error": "模型读取失败", "detail": redact_secrets(" | ".join(errors))}), 502
-
-
+    try:
+        if model_kind == "both":
+            if not custom_api_debug_enabled():
+                model_kind = "image"
+            else:
+                image_list, image_url, image_route = fetch_custom_models_by_kind("image", api_url, api_key)
+                text_list, text_url, text_route = fetch_custom_models_by_kind("text", "", "")
+                image_models = split_model_ids(image_list)[0]
+                text_models = split_model_ids(text_list)[1]
+                return jsonify({
+                    "ok": True,
+                    "models": sorted(set(image_list + text_list)),
+                    "image_models": image_models,
+                    "text_models": text_models,
+                    "api_url": image_url,
+                    "text_api_url": text_url,
+                    "route_kind": image_route,
+                    "text_route_kind": text_route,
+                })
+        model_list, resolved_url, route_kind = fetch_custom_models_by_kind(model_kind, api_url, api_key)
+        image_models, text_models = split_model_ids(model_list)
+        return jsonify({
+            "ok": True,
+            "models": model_list,
+            "image_models": image_models if model_kind == "image" else [],
+            "text_models": text_models if model_kind == "text" else text_models,
+            "api_url": resolved_url,
+            "route_kind": route_kind,
+        })
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": "模型读取失败", "detail": redact_secrets(str(exc))}), 502
 @app.get("/api/debug/custom-api")
 def debug_custom_api():
     auth = login_required_json()
@@ -2851,12 +3043,25 @@ def debug_custom_api():
         return auth
     config = read_model_config()
     debug_enabled = custom_api_debug_enabled(config)
-    api_url, api_key = admin_custom_api_credentials(config)
+    image_url, image_key, image_route_kind = custom_model_route_credentials(config, "image")
+    text_url, text_key, text_route_kind = custom_model_route_credentials(config, "text")
     return jsonify({
         "ok": True,
         "enabled": debug_enabled,
-        "api_url": api_url if debug_enabled else "",
-        "has_api_key": bool(api_key) if debug_enabled else False,
+        "api_url": image_url if debug_enabled else "",
+        "has_api_key": bool(image_key) if debug_enabled else False,
+        "routes": {
+            "image": {
+                "api_url": image_url if debug_enabled else "",
+                "has_api_key": bool(image_key) if debug_enabled else False,
+                "route_kind": image_route_kind if debug_enabled else "",
+            },
+            "text": {
+                "api_url": text_url if debug_enabled else "",
+                "has_api_key": bool(text_key) if debug_enabled else False,
+                "route_kind": text_route_kind if debug_enabled else "",
+            },
+        },
     })
 
 
@@ -2882,7 +3087,7 @@ def agent_plan():
                 return jsonify({"ok": False, "error": "本地号池没有可用账号", "detail": "请先到管理后台导入并刷新可用号池账号"}), 200
             plan = call_agent_text_model_with_pool(model, payload)
         else:
-            api_url, api_key, _used_debug_key = resolve_custom_api_credentials(api_url, api_key)
+            api_url, api_key, _used_debug_key, _route_kind = resolve_custom_api_credentials(api_url, api_key, "text")
             if not api_url:
                 return jsonify({"error": "请先填写文本模型 API URL"}), 400
             if not api_key:
@@ -2916,11 +3121,13 @@ def create_job():
         return jsonify({"error": "本地号池没有可用账号，请先到管理员号池导入账号并刷新额度"}), 400
     api_url = str(payload.get("api_url") or "").strip()
     if connection_mode == "custom":
-        api_url, api_key, used_debug_key = resolve_custom_api_credentials(api_url, api_key)
+        api_url, api_key, used_debug_key, route_kind = resolve_custom_api_credentials(api_url, api_key, "image")
         if not api_url:
             return jsonify({"error": "请先填写自定义 API URL"}), 400
-        if not (api_key or NEW_API_TOKEN):
+        if not api_key:
             return jsonify({"error": "请先填写 API Key"}), 400
+    else:
+        route_kind = ""
     if connection_mode == "pool":
         resolved_api_url, resolve_errors = "local-account-pool", []
     else:
@@ -2936,6 +3143,7 @@ def create_job():
         "resolved_api_url": resolved_api_url,
         "api_key": api_key,
         "api_key_source": "debug_admin_config" if used_debug_key else ("user_input" if api_key else ""),
+        "api_key_route": route_kind,
         "connection_errors": resolve_errors,
         "pool_user_id": pool_user.get("id") if pool_user else "",
         "pool_username": pool_user.get("username") if pool_user else "",
@@ -2999,11 +3207,13 @@ def retry_job(job_id):
         return jsonify({"error": "本地号池没有可用账号，请先到管理员号池导入账号并刷新额度"}), 400
     api_url = str(payload.get("api_url") or source.get("api_url") or "").strip()
     if connection_mode == "custom":
-        api_url, api_key, used_debug_key = resolve_custom_api_credentials(api_url, api_key)
+        api_url, api_key, used_debug_key, route_kind = resolve_custom_api_credentials(api_url, api_key, "image")
         if not api_url:
             return jsonify({"error": "请先填写自定义 API URL"}), 400
-        if not (api_key or NEW_API_TOKEN):
+        if not api_key:
             return jsonify({"error": "请先填写 API Key"}), 400
+    else:
+        route_kind = ""
     if connection_mode == "pool":
         resolved_api_url, resolve_errors = "local-account-pool", []
     else:
@@ -3019,6 +3229,7 @@ def retry_job(job_id):
         "resolved_api_url": resolved_api_url,
         "api_key": api_key,
         "api_key_source": "debug_admin_config" if used_debug_key else ("user_input" if api_key else ""),
+        "api_key_route": route_kind,
         "connection_errors": resolve_errors,
         "pool_user_id": pool_user.get("id") if pool_user else "",
         "pool_username": pool_user.get("username") if pool_user else "",
