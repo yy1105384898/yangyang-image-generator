@@ -164,12 +164,15 @@ let agentPlan = null;
 let agentPlanRevision = 0;
 let appliedAgentVariant = null;
 let previewAgentVariant = "stable";
+let agentModePlan = null;
 let customIndustryAgent = null;
 let agentComposerExpanded = false;
 let guideStep = 0;
 let guideAutoShown = false;
 let guideDismissedThisSession = false;
 const GUIDE_STORAGE_KEY = "yangyangapi:onboarding:v1:completed";
+let submitInFlight = false;
+let activeSubmitRequestId = "";
 
 function currentHistoryJob() {
   if (!selectedHistoryJobId || selectedHistoryJobId === NEW_TASK_DRAFT_ID) return null;
@@ -1429,6 +1432,7 @@ function renderAvailableModels(models = verifiedImageModels) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `available-model-item ${model === els.model.value ? "selected" : ""}`;
+    button.dataset.modelName = model;
     button.innerHTML = `
       <strong>${escapeHtml(model)}</strong>
       <span>${escapeHtml(description)}</span>
@@ -1495,6 +1499,9 @@ function syncAgentMode() {
     els.prompt.placeholder = agentModeEnabled
       ? "上传参考图后，直接描述你想做一张图、一组不同图片，或一本宣传画册..."
       : "描述你想生成的图片...";
+  }
+  if (!agentModeEnabled) {
+    agentModePlan = null;
   }
 }
 
@@ -1888,6 +1895,90 @@ function makeAgentPlan(valuesOverride = null, revision = 1) {
       { id: "commercial", title: revision > 1 ? `商业版 R${revision}` : "商业版", prompt: buildAgentPrompt("commercial", values, revision) },
     ],
   };
+}
+
+async function requestAgentModePlan(basePrompt) {
+  const textModel = selectedTextModel();
+  if (!textModel) {
+    throw new Error("未配置 Agent 文本模型");
+  }
+  const references = state.references
+    .filter((ref) => selectedReferenceIds.has(ref.id))
+    .slice(0, 4)
+    .map((ref) => ({
+      id: ref.id,
+      name: ref.name || ref.filename || "",
+      mime: ref.mime || "",
+    }));
+  const data = await api("/api/agent-mode-plan", {
+    method: "POST",
+    body: JSON.stringify({
+      connection_mode: els.connectionMode.value,
+      api_url: selectedApiUrl(),
+      api_key: selectedApiKey(),
+      text_model: textModel,
+      text_api_url: selectedTextApiUrl(),
+      text_api_key: selectedTextApiKey(),
+      text_custom_fallback: Boolean(els.connectionMode.value === "pool" && !verifiedTextModels.length),
+      prompt: basePrompt,
+      image_model: els.model.value,
+      aspect_ratio: els.aspectRatio.value,
+      count: Number(els.count.value || 1),
+      negative: els.negative.value.trim(),
+      references,
+    }),
+  });
+  if (data && data.ok === false) {
+    throw new Error(data.detail || data.error || "Agent 模式 A 拆解失败");
+  }
+  return { ...(data.plan || {}), textModel: data.model || textModel };
+}
+
+function applyAgentModePlan(plan) {
+  if (!plan || typeof plan !== "object") return "";
+  if (plan.title && !els.title.value.trim()) {
+    els.title.value = String(plan.title).trim();
+  }
+  if (plan.aspect_ratio && [...els.aspectRatio.options].some((option) => option.value === plan.aspect_ratio)) {
+    els.aspectRatio.value = plan.aspect_ratio;
+  }
+  if (plan.count) {
+    els.count.value = String(Math.max(1, Math.min(Number(plan.count) || 1, 20)));
+    syncConcurrencyToCount();
+  }
+  if (plan.negative) {
+    els.negative.value = String(plan.negative).trim();
+  }
+  syncSummary();
+  return String(plan.prompt || "").trim();
+}
+
+function showAgentModeAnalysis(plan, originalPrompt) {
+  const prompt = applyAgentModePlan(plan) || originalPrompt;
+  const notes = [
+    plan.brief ? `Brief：${plan.brief}` : "",
+    Array.isArray(plan.steps) && plan.steps.length ? `拆解步骤：${plan.steps.join("；")}` : "",
+    Array.isArray(plan.notes) && plan.notes.length ? `注意事项：${plan.notes.join("；")}` : "",
+  ].filter(Boolean);
+  const warning = els.promptAnalysisCard?.querySelector(".analysis-warning");
+  if (warning) {
+    warning.querySelector("b").textContent = "Agent 模式 A 已拆解";
+    warning.querySelector("span").textContent = notes.join(" ") || "已将任务拆解为可直接生成的提示词和参数。";
+  }
+  const styleTags = els.promptAnalysisCard?.querySelector(".analysis-style-tags");
+  if (styleTags) {
+    const tags = [plan.task_type === "album" ? "宣传画册" : plan.task_type === "set" ? "成组图片" : "单图任务", "AI 拆解", "可直接生成", selectedReferenceIds.size ? "参考图约束" : ""].filter(Boolean);
+    styleTags.innerHTML = tags.map((item) => `<span>${escapeHtml(item)}</span>`).join("");
+  }
+  els.analysisResultTitle.textContent = `Agent 模式 A · ${escapeHtml(plan.textModel || "文本模型")} 拆解完成`;
+  els.promptScore.textContent = "96";
+  els.analysisAspect.textContent = els.aspectRatio.value;
+  els.analysisSize.textContent = requestSize();
+  els.analysisCount.textContent = els.count.value;
+  els.analysisStyle.textContent = "agent";
+  els.optimizedPrompt.value = prompt;
+  els.promptAnalysisCard.classList.remove("hidden");
+  els.composer?.classList.add("analysis-open");
 }
 
 async function requestAgentPlan(values, revision) {
@@ -2639,11 +2730,14 @@ function buildVariants() {
 }
 
 async function performSubmitJob(promptOverride = "") {
+  if (submitInFlight) return;
   const prompt = (promptOverride || els.prompt.value).trim();
   if (!prompt) {
     els.prompt.focus();
     return;
   }
+  submitInFlight = true;
+  agentModePlan = null;
   if (els.connectionMode.value === "pool" && !activePoolUser()) {
     setConnectionStatus("请先登录号池账号", "error");
     setModelStatus("请先登录号池账号", "error");
@@ -2652,6 +2746,7 @@ async function performSubmitJob(promptOverride = "") {
   }
   saveApiKeyPreference();
   const numbers = normalizeGenerationNumbers();
+  activeSubmitRequestId = activeSubmitRequestId || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   els.submitJob.disabled = true;
   els.submitJob.textContent = "…";
   try {
@@ -2660,6 +2755,7 @@ async function performSubmitJob(promptOverride = "") {
       method: "POST",
       body: JSON.stringify({
         mode: "single",
+        client_request_id: activeSubmitRequestId,
         title,
         prompt,
         model: els.model.value,
@@ -2719,8 +2815,33 @@ function stopPreflight() {
   }
 }
 
+async function showAgentModePreflight() {
+  const originalPrompt = els.prompt.value.trim();
+  if (!originalPrompt) return false;
+  els.submitJob.disabled = true;
+  els.submitJob.textContent = "拆";
+  setModelStatus("Agent 模式 A 正在调用文本模型拆解任务...", "loading");
+  try {
+    agentModePlan = await requestAgentModePlan(originalPrompt);
+    showAgentModeAnalysis(agentModePlan, originalPrompt);
+    return true;
+  } catch (err) {
+    agentModePlan = null;
+    setModelFetchHelp(`Agent 模式 A 拆解失败，已改用本地预检：${err.message}`, "error");
+    showPreflightGenerate();
+    return false;
+  } finally {
+    submitInFlight = false;
+    activeSubmitRequestId = "";
+    els.submitJob.disabled = false;
+    els.submitJob.textContent = "➤";
+  }
+}
+
 function showPreflightGenerate() {
+  if (preflightTimer || submitInFlight) return;
   preflightOriginalPrompt = els.prompt.value.trim();
+  agentModePlan = null;
   showPromptAnalysis("preflight");
   els.analysisResultTitle.textContent = "已完成预检";
   els.applyOptimizedPrompt.textContent = "✣ 使用优化版生成";
@@ -2747,10 +2868,15 @@ function showPreflightGenerate() {
   preflightTimer = window.setInterval(tick, 1000);
 }
 
-function submitJob() {
+async function submitJob() {
+  if (submitInFlight || preflightTimer) return;
   const prompt = els.prompt.value.trim();
   if (!prompt) {
     els.prompt.focus();
+    return;
+  }
+  if (agentModeEnabled) {
+    await showAgentModePreflight();
     return;
   }
   if (els.sendOptimize?.checked) {
@@ -3156,7 +3282,7 @@ function setRecommendedParams({ quality = "auto", applyNow = false } = {}) {
   els.aspectRatio.value = selectedAgent?.aspectRatio || "1:1";
   els.resolution.value = "1K";
   els.outputFormat.value = "png";
-  if (selectedAgent?.count) {
+  if (selectedAgent?.count && agentEnabled) {
     els.count.value = String(selectedAgent.count);
   }
   syncConcurrencyToCount();
@@ -3229,6 +3355,10 @@ function applyOptimizedPrompt() {
 }
 
 function applyRecommendedParams() {
+  if (agentModePlan) {
+    applyAgentModePlan(agentModePlan);
+    return;
+  }
   setRecommendedParams({ quality: els.analysisStyle?.textContent === "high" ? "high" : "auto", applyNow: true });
 }
 

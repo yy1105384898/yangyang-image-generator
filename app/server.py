@@ -2280,6 +2280,107 @@ def build_agent_plan_messages(payload: dict) -> list[dict]:
     ]
 
 
+def normalize_agent_mode_plan(plan: dict, fallback_prompt: str) -> dict:
+    if not isinstance(plan, dict):
+        raise ValueError("agent mode plan must be an object")
+    prompt = str(plan.get("prompt") or fallback_prompt or "").strip()
+    if not prompt:
+        raise ValueError("agent mode plan missing prompt")
+    title = str(plan.get("title") or "").strip()[:80]
+    task_type = str(plan.get("task_type") or "single").strip().lower()
+    if task_type not in {"single", "set", "album"}:
+        task_type = "single"
+    aspect_ratio = str(plan.get("aspect_ratio") or "").strip()
+    if aspect_ratio not in {"1:1", "4:5", "5:4", "3:4", "4:3", "2:3", "3:2", "16:9", "9:16", "21:9", "1:4", "8:1", "1:8"}:
+        aspect_ratio = ""
+    try:
+        count = int(plan.get("count") or 1)
+    except (TypeError, ValueError):
+        count = 1
+    steps = plan.get("steps") if isinstance(plan.get("steps"), list) else []
+    notes = plan.get("notes") if isinstance(plan.get("notes"), list) else []
+    return {
+        "title": title,
+        "task_type": task_type,
+        "brief": str(plan.get("brief") or "").strip()[:1600],
+        "prompt": prompt[:5000],
+        "aspect_ratio": aspect_ratio,
+        "count": max(1, min(count, 20)),
+        "negative": str(plan.get("negative") or "").strip()[:1200],
+        "steps": [str(item or "").strip() for item in steps if str(item or "").strip()][:8],
+        "notes": [str(item or "").strip() for item in notes if str(item or "").strip()][:8],
+    }
+
+
+def build_agent_mode_messages(payload: dict) -> list[dict]:
+    prompt = str(payload.get("prompt") or "").strip()
+    references = payload.get("references") if isinstance(payload.get("references"), list) else []
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是生图工作台的任务拆解 Agent。只输出严格 json object，不要 Markdown。"
+                "你要理解用户想做一张图、一组不同图片或宣传画册，并转成可直接生图的中文提示词和参数。"
+                "如果有参考图，必须说明保留参考主体、结构、颜色或关键细节，并把编辑/再生成约束写进 prompt。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps({
+                "output_schema": {
+                    "title": "string",
+                    "task_type": "single | set | album",
+                    "brief": "string",
+                    "prompt": "string",
+                    "aspect_ratio": "string",
+                    "count": "number",
+                    "negative": "string",
+                    "steps": ["string"],
+                    "notes": ["string"],
+                },
+                "requirements": [
+                    "prompt 必须包含主体、场景、构图、光线、镜头、材质/颜色、背景、平台用途、交付标准。",
+                    "single 推荐 1-2 张，set 推荐 3-6 张，album 推荐 6-12 张。",
+                    "不要要求模型生成可读中文文字，除非用户明确要求。",
+                    "不要只复述用户原话，要补足可执行画面方案。",
+                ],
+                "user_prompt": prompt,
+                "current": {
+                    "model": payload.get("image_model"),
+                    "aspect_ratio": payload.get("aspect_ratio"),
+                    "count": payload.get("count"),
+                    "negative": payload.get("negative"),
+                },
+                "references": references[:4],
+            }, ensure_ascii=False),
+        },
+    ]
+
+
+def call_agent_mode_text_model(api_url: str, api_key: str, model: str, payload: dict) -> dict:
+    api_base = normalize_api_base(api_url)
+    headers = {"Content-Type": "application/json"}
+    auth = bearer_token(api_key)
+    if auth:
+        headers["Authorization"] = auth
+    body = {
+        "model": model,
+        "messages": build_agent_mode_messages(payload),
+        "temperature": 0.65,
+    }
+    endpoint = urljoin(api_base + "/", "v1/chat/completions")
+    resp = requests.post(endpoint, headers=headers, json=body, timeout=AGENT_TEXT_TIMEOUT)
+    if resp.status_code >= 400:
+        raise RuntimeError(redact_secrets(f"New API {resp.status_code}: {resp.text[:800].strip()}"))
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("文本模型没有返回 choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    return normalize_agent_mode_plan(extract_json_object(content), str(payload.get("prompt") or ""))
+
+
 def call_agent_text_model(api_url: str, api_key: str, model: str, payload: dict) -> dict:
     api_base = normalize_api_base(api_url)
     headers = {"Content-Type": "application/json"}
@@ -3098,6 +3199,49 @@ def agent_plan():
         return jsonify({"ok": False, "error": "Agent 文本模型生成失败", "detail": redact_secrets(str(exc))}), 200
 
 
+@app.post("/api/agent-mode-plan")
+def agent_mode_plan():
+    auth = login_required_json()
+    if auth:
+        return auth
+    payload = request.get_json(silent=True) or {}
+    model = str(payload.get("text_model") or DEFAULT_TEXT_MODEL).strip()
+    connection_mode = str(payload.get("connection_mode") or "custom").strip()
+    text_custom_fallback = bool(payload.get("text_custom_fallback"))
+    api_url = str(payload.get("text_api_url") or payload.get("api_url") or "").strip()
+    api_key = str(payload.get("text_api_key") or payload.get("api_key") or "").strip()
+    if not model:
+        return jsonify({"error": "请先选择或填写 Agent 文本模型"}), 400
+    try:
+        if connection_mode == "pool" and not text_custom_fallback:
+            pool_user, pool_error = require_pool_user_json()
+            if pool_error:
+                return pool_error
+            if not pool_available_accounts():
+                return jsonify({"ok": False, "error": "本地号池没有可用账号", "detail": "请先到管理后台导入并刷新可用号池账号"}), 200
+            account = pick_pool_account()
+            token = account["access_token"]
+            try:
+                client = ChatGptImageClient(token)
+                resp = client.start_text_generation(model, build_agent_mode_messages(payload), {"reasoning_effort": "low"})
+                content = resp["choices"][0]["message"]["content"]
+                plan = normalize_agent_mode_plan(extract_json_object(content), str(payload.get("prompt") or ""))
+                mark_pool_account_result(token, True)
+            except Exception as exc:
+                mark_pool_account_result(token, False, redact_secrets(str(exc)))
+                raise
+        else:
+            api_url, api_key, _used_debug_key, _route_kind = resolve_custom_api_credentials(api_url, api_key, "text")
+            if not api_url:
+                return jsonify({"error": "请先填写文本模型 API URL"}), 400
+            if not api_key:
+                return jsonify({"error": "请先填写文本模型 API Key"}), 400
+            plan = call_agent_mode_text_model(api_url, api_key, model, payload)
+        return jsonify({"ok": True, "plan": plan, "model": model})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "Agent 模式 A 拆解失败", "detail": redact_secrets(str(exc))}), 200
+
+
 @app.post("/api/jobs")
 def create_job():
     auth = login_required_json()
@@ -3133,8 +3277,21 @@ def create_job():
     else:
         resolved_api_url, resolve_errors = resolve_api_url(connection_mode, api_url, api_key)
     client_id = current_client_id()
+    client_request_id = str(payload.get("client_request_id") or "").strip()[:120]
+    if client_request_id:
+        existing = next(
+            (
+                item for item in read_jobs()
+                if matches_client(item, client_id)
+                and str(item.get("client_request_id") or "") == client_request_id
+            ),
+            None,
+        )
+        if existing:
+            return jsonify({"job": public_job(existing)})
     job = {
         "id": uuid.uuid4().hex,
+        "client_request_id": client_request_id,
         "client_id": client_id,
         "mode": mode,
         "protocol": str(payload.get("protocol") or "custom-openai").strip(),
