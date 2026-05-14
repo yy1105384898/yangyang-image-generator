@@ -356,82 +356,149 @@ const resolutionMultipliers = { "1K": 1, "2K": 2, "4K": 4 };
 
 const promptSkillLibrary = {
   productHero: {
+    group: "base",
     name: "产品英雄主图",
     desc: "主体完整、大占比、平台安全区清楚",
     instruction: "使用产品英雄主图技法：主体完整清晰，占画面主要面积，背景干净，平台安全区明确，适合首图和详情页首屏。",
   },
   lifestyleScene: {
+    group: "base",
     name: "生活方式场景",
     desc: "把产品放进真实使用环境",
     instruction: "使用生活方式场景技法：把主体放进真实可理解的使用场景，加入少量人物动作或环境线索，强调真实使用价值。",
   },
   benefitVisual: {
+    group: "base",
     name: "卖点可视化",
     desc: "把功能优势转成画面证据",
     instruction: "使用卖点可视化技法：把核心卖点转成可见的材质、结构、对比、状态变化或场景结果，不依赖文字解释。",
   },
   macroDetail: {
+    group: "base",
     name: "材质微距",
     desc: "突出纹理、工艺、质感",
     instruction: "使用材质微距技法：靠近主体关键部位，突出纹理、工艺、高光、边缘和触感，背景虚化且不抢主体。",
   },
   miniatureWorld: {
+    group: "base",
     name: "微缩场景",
     desc: "用小人/微缩空间制造记忆点",
     instruction: "使用微缩场景技法：围绕主体构建微缩世界或小尺度叙事，让主体像场景核心装置，保持商业质感和识别度。",
   },
   flatlayKit: {
+    group: "base",
     name: "平铺清单",
     desc: "适合套装、步骤、成分展示",
     instruction: "使用平铺清单技法：俯拍整齐陈列主体、配件、材料或步骤道具，留出标题区，画面清楚有秩序。",
   },
   coverHook: {
+    group: "base",
     name: "封面钩子",
     desc: "大主体、高对比、一秒读懂",
     instruction: "使用封面钩子技法：大主体、高对比、清晰动作瞬间或结果展示，手机缩略图也能一秒读懂。",
   },
   beforeAfter: {
+    group: "base",
     name: "前后对比",
     desc: "突出变化、效果、解决问题",
     instruction: "使用前后对比技法：用左右分区、场景状态变化或结果对照表现痛点和改善，但不要生成错误文字。",
   },
   kvLayout: {
+    group: "base",
     name: "广告 KV",
     desc: "品牌主视觉、标题安全区",
     instruction: "使用广告 KV 技法：主体、卖点视觉和标题安全区分区明确，构图适合投放、官网头图和品牌页面复用。",
   },
   infographic: {
+    group: "base",
     name: "信息图布局",
     desc: "参数、步骤、结构更清楚",
     instruction: "使用信息图布局技法：以视觉分区表达结构、步骤或参数关系，保留文字位置但不要要求模型生成可读中文。",
   },
   ugcReal: {
+    group: "base",
     name: "真实 UGC",
     desc: "手机实拍感、自然可信",
     instruction: "使用真实 UGC 技法：模拟自然手机拍摄、真实环境光和轻微生活痕迹，画面可信但保持干净专业。",
   },
   premiumLuxury: {
+    group: "base",
     name: "奢华质感",
     desc: "高级材质、克制光影",
     instruction: "使用奢华质感技法：高级材质、高光边缘、克制背景、低噪点商业布光，避免廉价模板感。",
   },
   uiMockup: {
+    group: "base",
     name: "界面样机",
     desc: "SaaS/App 功能展示",
     instruction: "使用界面样机技法：展示清晰产品界面、设备样机、功能层级和品牌色，不生成混乱文字和不可读界面。",
   },
+  caseMiniatureDiorama: {
+    group: "case",
+    name: "案例 · 微缩搭景",
+    desc: "用微缩人物和装置把卖点讲成画面",
+    instruction: "使用案例灵感：把主体放大成场景核心，用微缩人物、工具、平台或装置表达“打造、修护、升级、制造”等隐喻，主体标签和外观保持清晰。",
+  },
+  caseStoryboardGrid: {
+    group: "case",
+    name: "案例 · 分镜九宫格",
+    desc: "把单张图扩展成产品故事板",
+    instruction: "使用案例灵感：按 6 到 9 个镜头组织产品故事板，包含环境建立、英雄镜头、材质特写、使用动作、结果展示和收尾画面，整体产品身份保持一致。",
+  },
+  caseLuxuryCampaign: {
+    group: "case",
+    name: "案例 · 奢品广告系统",
+    desc: "主物、包装、反光、品牌安全区",
+    instruction: "使用案例灵感：搭建高端广告系统，包含主商品、包装或道具、反光台面、轮廓高光、克制色彩和标题安全区，画面可用于品牌 KV。",
+  },
+  casePosterNarrative: {
+    group: "case",
+    name: "案例 · 海报叙事",
+    desc: "用单张海报讲清活动或主题",
+    instruction: "使用案例灵感：把主题拆成主体、环境、动作、情绪和留白区域，形成有故事感的海报画面，避免堆砌元素和不可读文字。",
+  },
+  caseSocialMockup: {
+    group: "case",
+    name: "案例 · 社媒样机",
+    desc: "封面、界面、设备、发布场景",
+    instruction: "使用案例灵感：把界面、设备样机、封面构图和社媒发布场景结合，突出可点击的第一屏视觉，保留标题或按钮安全区。",
+  },
+  characterConsistency: {
+    group: "case",
+    name: "角色一致性",
+    desc: "适合人像、IP、连续内容",
+    instruction: "使用角色一致性技法：明确角色年龄、发型、服装、五官特征、姿态和标志性道具，多方案中保持同一身份，不随场景变化而换脸或换设定。",
+  },
+  referenceRestage: {
+    group: "edit",
+    name: "参考图再编排",
+    desc: "保留参考主体，重做场景和构图",
+    instruction: "使用参考图再编排技法：如果上传了参考图，优先保留主体身份、结构、颜色和关键细节，只重做背景、光线、构图、道具和商业氛围。",
+  },
+  localRedraw: {
+    group: "edit",
+    name: "局部重绘",
+    desc: "只改指定区域，其他保持不变",
+    instruction: "使用局部重绘技法：明确只修改目标区域或目标元素，周围主体、比例、材质和视角保持不变，避免全图风格漂移。",
+  },
 };
 
+const promptSkillGroups = [
+  { id: "base", title: "基础技法", desc: "主体、卖点、材质、构图" },
+  { id: "case", title: "案例灵感包", desc: "来自优秀 GPT Image 案例的可复用方法" },
+  { id: "edit", title: "图生图 / 编辑", desc: "参考图再生成、局部重绘和一致性控制" },
+];
+
 const defaultPromptSkills = {
-  commerce: ["productHero", "benefitVisual", "macroDetail", "lifestyleScene"],
-  xiaohongshu: ["coverHook", "lifestyleScene", "flatlayKit", "beforeAfter"],
-  "short-video": ["coverHook", "beforeAfter", "lifestyleScene", "benefitVisual"],
-  poster: ["kvLayout", "benefitVisual", "premiumLuxury", "infographic"],
-  interior: ["lifestyleScene", "premiumLuxury", "benefitVisual", "ugcReal"],
-  portrait: ["premiumLuxury", "lifestyleScene", "coverHook", "ugcReal"],
-  food: ["productHero", "macroDetail", "lifestyleScene", "coverHook"],
-  saas: ["uiMockup", "kvLayout", "infographic", "benefitVisual"],
-  custom: ["productHero", "lifestyleScene", "benefitVisual", "kvLayout"],
+  commerce: ["productHero", "benefitVisual", "macroDetail", "caseMiniatureDiorama", "referenceRestage"],
+  xiaohongshu: ["coverHook", "lifestyleScene", "flatlayKit", "caseSocialMockup", "beforeAfter"],
+  "short-video": ["coverHook", "caseStoryboardGrid", "beforeAfter", "lifestyleScene", "benefitVisual"],
+  poster: ["kvLayout", "casePosterNarrative", "benefitVisual", "premiumLuxury", "infographic"],
+  interior: ["lifestyleScene", "premiumLuxury", "benefitVisual", "ugcReal", "referenceRestage"],
+  portrait: ["premiumLuxury", "characterConsistency", "lifestyleScene", "coverHook", "ugcReal"],
+  food: ["productHero", "macroDetail", "caseStoryboardGrid", "lifestyleScene", "coverHook"],
+  saas: ["uiMockup", "caseSocialMockup", "kvLayout", "infographic", "benefitVisual"],
+  custom: ["productHero", "benefitVisual", "referenceRestage", "caseStoryboardGrid", "kvLayout"],
 };
 
 const industryAgents = [
@@ -1028,7 +1095,7 @@ function inferCustomIndustryAgent(text = "") {
     sceneOptions: ["标准主图", "生活方式场景", "卖点展示", "广告 KV"],
     platformOptions: ["电商主图", "社媒内容", "官网头图", "广告投放"],
     holdOptions: ["不需要", "上方留白", "右侧留白", "底部留白"],
-    skillIds: ["productHero", "lifestyleScene", "benefitVisual", "kvLayout"],
+    skillIds: ["productHero", "benefitVisual", "referenceRestage", "caseStoryboardGrid", "kvLayout"],
   };
   if (has("美妆", "护肤", "口红", "精华", "面霜", "香水")) {
     preset = {
@@ -1039,7 +1106,7 @@ function inferCustomIndustryAgent(text = "") {
       sceneOptions: ["纯净棚拍", "水润质感", "成分场景", "梳妆台生活方式"],
       platformOptions: ["电商详情页", "小红书封面", "品牌官网", "广告投放"],
       holdOptions: ["顶部留白", "右侧留白", "不需要"],
-      skillIds: ["productHero", "macroDetail", "premiumLuxury", "lifestyleScene"],
+      skillIds: ["productHero", "macroDetail", "premiumLuxury", "caseLuxuryCampaign", "referenceRestage"],
     };
   } else if (has("食品", "饮料", "咖啡", "茶", "零食", "餐", "菜", "甜品")) {
     preset = {
@@ -1050,7 +1117,7 @@ function inferCustomIndustryAgent(text = "") {
       sceneOptions: ["菜单主图", "餐桌氛围", "食材飞溅", "门店海报"],
       platformOptions: ["外卖平台", "菜单", "社媒", "门店屏幕"],
       holdOptions: ["顶部留白", "底部留白", "不需要"],
-      skillIds: ["productHero", "macroDetail", "lifestyleScene", "coverHook"],
+      skillIds: ["productHero", "macroDetail", "caseStoryboardGrid", "lifestyleScene", "coverHook"],
     };
   } else if (has("服装", "穿搭", "鞋", "包", "潮牌", "饰品")) {
     preset = {
@@ -1061,7 +1128,7 @@ function inferCustomIndustryAgent(text = "") {
       sceneOptions: ["模特穿搭", "平铺陈列", "街拍场景", "细节特写"],
       platformOptions: ["电商详情页", "小红书", "Lookbook", "广告投放"],
       holdOptions: ["左侧留白", "右侧留白", "不需要"],
-      skillIds: ["lifestyleScene", "flatlayKit", "macroDetail", "coverHook"],
+      skillIds: ["lifestyleScene", "flatlayKit", "macroDetail", "characterConsistency", "coverHook"],
     };
   } else if (has("课程", "训练营", "知识付费", "讲座", "教育", "培训")) {
     preset = {
@@ -1072,7 +1139,7 @@ function inferCustomIndustryAgent(text = "") {
       sceneOptions: ["讲师形象", "学习场景", "成果展示", "干货清单"],
       platformOptions: ["朋友圈海报", "小红书封面", "直播间封面", "落地页"],
       holdOptions: ["顶部留白", "右侧留白", "中部留白"],
-      skillIds: ["coverHook", "infographic", "beforeAfter", "kvLayout"],
+      skillIds: ["coverHook", "infographic", "casePosterNarrative", "beforeAfter", "kvLayout"],
     };
   } else if (has("app", "saas", "软件", "系统", "平台", "工具", "ai ")) {
     preset = {
@@ -1083,7 +1150,7 @@ function inferCustomIndustryAgent(text = "") {
       sceneOptions: ["官网首屏", "功能展示", "发布海报", "社媒横图"],
       platformOptions: ["官网", "Product Hunt", "社媒", "产品发布"],
       holdOptions: ["左侧留白", "右侧留白", "顶部留白", "不需要"],
-      skillIds: ["uiMockup", "kvLayout", "infographic", "benefitVisual"],
+      skillIds: ["uiMockup", "caseSocialMockup", "kvLayout", "infographic", "benefitVisual"],
     };
   }
   const subject = compact.slice(0, 36) || "自定义产品或主题";
@@ -1496,11 +1563,20 @@ function renderAgentList() {
 }
 
 function renderAgentEmpty() {
+  const activeSkillIds = new Set(defaultPromptSkills.custom);
+  const skillPreview = renderPromptSkillChips(activeSkillIds, { preview: true });
   els.agentWorkspace.innerHTML = `
     <div class="agent-empty-select">
       <span>✣</span>
       <strong>先选择一个行业 Agent</strong>
       <p>默认不启用行业工作流。可以选择左侧固定行业，也可以用当前输入内容动态生成一个自定义行业 Agent。</p>
+      <section class="agent-skill-section agent-skill-section-preview">
+        <div>
+          <strong>提示词技能库</strong>
+          <span>已加入案例灵感包和图生图编辑技能。选择行业后可逐项勾选，生成 GPT 方案和本地模板都会读取这些技能。</span>
+        </div>
+        <div class="agent-skill-preview-list">${skillPreview}</div>
+      </section>
     </div>
   `;
   setAgentFooter("empty");
@@ -1518,18 +1594,48 @@ function promptSkillIdsForAgent(agent) {
   return agent?.skillIds || defaultPromptSkills[agent?.id] || defaultPromptSkills.custom;
 }
 
+function renderPromptSkillChips(activeSkillIds = new Set(), { preview = false, limit = 0 } = {}) {
+  const entries = Object.entries(promptSkillLibrary);
+  const filtered = limit ? entries.slice(0, limit) : entries;
+  return promptSkillGroups.map((group) => {
+    const items = filtered.filter(([, skill]) => (skill.group || "base") === group.id);
+    if (!items.length) return "";
+    const chips = items.map(([id, skill]) => {
+      const checked = activeSkillIds.has(id);
+      if (preview) {
+        return `
+          <span class="agent-skill-preview-chip ${checked ? "selected" : ""}">
+            <strong>${escapeHtml(skill.name)}</strong>
+            <small>${escapeHtml(skill.desc)}</small>
+          </span>
+        `;
+      }
+      return `
+        <label class="agent-skill-chip">
+          <input type="checkbox" value="${escapeAttr(id)}" ${checked ? "checked" : ""}>
+          <span>
+            <strong>${escapeHtml(skill.name)}</strong>
+            <small>${escapeHtml(skill.desc)}</small>
+          </span>
+        </label>
+      `;
+    }).join("");
+    return `
+      <div class="agent-skill-group">
+        <div class="agent-skill-group-title">
+          <strong>${escapeHtml(group.title)}</strong>
+          <small>${escapeHtml(group.desc)}</small>
+        </div>
+        <div class="agent-skill-list">${chips}</div>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderAgentForm() {
   const fields = selectedAgent.fields || {};
   const activeSkillIds = new Set(promptSkillIdsForAgent(selectedAgent));
-  const skillList = Object.entries(promptSkillLibrary).map(([id, skill]) => `
-    <label class="agent-skill-chip">
-      <input type="checkbox" value="${escapeAttr(id)}" ${activeSkillIds.has(id) ? "checked" : ""}>
-      <span>
-        <strong>${escapeHtml(skill.name)}</strong>
-        <small>${escapeHtml(skill.desc)}</small>
-      </span>
-    </label>
-  `).join("");
+  const skillList = renderPromptSkillChips(activeSkillIds);
   const optionHtml = (items = []) => items.map((item) => `<option value="${escapeAttr(item)}">${escapeHtml(item)}</option>`).join("");
   els.agentWorkspace.innerHTML = `
     <div class="agent-workspace-form">
