@@ -1425,19 +1425,11 @@ function renderAvailableModels(models = verifiedImageModels) {
     return;
   }
   for (const model of filtered) {
-    const profile = modelProfileMap.get(model) || {};
-    const description = profile.description && profile.description !== model
-      ? profile.description
-      : (profile.title && profile.title !== model ? profile.title : "已从当前接口读取到的生图模型");
     const button = document.createElement("button");
     button.type = "button";
     button.className = `available-model-item ${model === els.model.value ? "selected" : ""}`;
     button.dataset.modelName = model;
-    button.innerHTML = `
-      <strong>${escapeHtml(model)}</strong>
-      <span>${escapeHtml(description)}</span>
-      <small>${escapeHtml(profile.tag || "生图模型")}</small>
-    `;
+    button.textContent = model;
     button.addEventListener("click", () => {
       els.model.value = model;
       localStorage.setItem(SELECTED_IMAGE_MODEL_KEY, model);
