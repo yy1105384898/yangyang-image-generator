@@ -1293,7 +1293,22 @@ function formatModelTime() {
   return `${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
 
+function normalizeModelId(model) {
+  if (typeof model === "string") return model.trim();
+  if (model && typeof model === "object") {
+    return String(model.id || model.name || model.model || "").trim();
+  }
+  return String(model || "").trim();
+}
+
+function cleanModelList(models = []) {
+  return Array.from(new Set((Array.isArray(models) ? models : [])
+    .map(normalizeModelId)
+    .filter(Boolean)));
+}
+
 function replaceModelOptions(models) {
+  models = cleanModelList(models);
   const saved = localStorage.getItem(SELECTED_IMAGE_MODEL_KEY) || "";
   const current = els.model.value || saved;
   els.model.innerHTML = "";
@@ -1352,6 +1367,7 @@ function syncTextModelFields() {
 }
 
 function replaceTextModelOptions(models = []) {
+  models = cleanModelList(models);
   if (!els.analysisModel) return;
   const saved = localStorage.getItem(SELECTED_TEXT_MODEL_KEY) || "";
   const current = els.analysisModel.value || saved;
@@ -1398,7 +1414,8 @@ function selectedTextApiKey() {
 function renderAvailableModels(models = verifiedImageModels) {
   if (!els.availableModelList) return;
   const query = (els.modelFilter?.value || "").trim().toLowerCase();
-  const filtered = models.filter((model) => !query || model.toLowerCase().includes(query));
+  const normalizedModels = cleanModelList(models);
+  const filtered = normalizedModels.filter((model) => !query || model.toLowerCase().includes(query));
   els.availableModelList.innerHTML = "";
   if (!filtered.length) {
     els.availableModelList.innerHTML = '<div class="empty-model-list">暂无可用生图模型</div>';
@@ -1406,12 +1423,15 @@ function renderAvailableModels(models = verifiedImageModels) {
   }
   for (const model of filtered) {
     const profile = modelProfileMap.get(model) || {};
+    const description = profile.description && profile.description !== model
+      ? profile.description
+      : (profile.title && profile.title !== model ? profile.title : "已从当前接口读取到的生图模型");
     const button = document.createElement("button");
     button.type = "button";
     button.className = `available-model-item ${model === els.model.value ? "selected" : ""}`;
     button.innerHTML = `
-      <strong>${escapeHtml(profile.title || model)}</strong>
-      <span>${escapeHtml(profile.description || model)}</span>
+      <strong>${escapeHtml(model)}</strong>
+      <span>${escapeHtml(description)}</span>
       <small>${escapeHtml(profile.tag || "生图模型")}</small>
     `;
     button.addEventListener("click", () => {
