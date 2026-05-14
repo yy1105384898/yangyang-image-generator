@@ -1408,8 +1408,11 @@ def extract_pool_image_ids(text: str) -> tuple[list[str], list[str]]:
     return file_ids, sediment_ids
 
 
-def build_pool_image_prompt(prompt: str, ratio: str) -> str:
+def build_pool_image_prompt(prompt: str, ratio: str, resolution: str = "", quality: str = "", size: str = "") -> str:
     ratio = str(ratio or "").strip()
+    resolution = str(resolution or "").strip()
+    quality = str(quality or "").strip()
+    size = str(size or "").strip()
     hints = {
         "1:1": "输出 1:1 正方形构图。",
         "16:9": "输出 16:9 横屏构图。",
@@ -1421,8 +1424,18 @@ def build_pool_image_prompt(prompt: str, ratio: str) -> str:
         "2:3": "输出 2:3 竖向构图。",
         "3:2": "输出 3:2 横向构图。",
     }
-    hint = hints.get(ratio)
-    return f"{prompt.strip()}\n\n{hint}" if hint else prompt.strip()
+    quality_hints = {
+        "standard": "质量使用 standard 标准质量，优先速度和稳定性。",
+        "high": "质量使用 high 高质量，强化细节、材质和边缘清晰度。",
+        "hd": "质量使用 hd 高清质量，强化细节、真实光影和可交付质感。",
+    }
+    extras = [
+        hints.get(ratio),
+        f"目标分辨率档位：{resolution}；请求尺寸参考：{size}。" if resolution or size else "",
+        quality_hints.get(quality.lower(), ""),
+    ]
+    extras = [item for item in extras if item]
+    return "\n\n".join([prompt.strip(), *extras]) if extras else prompt.strip()
 
 
 class ChatGptImageClient:
@@ -1820,8 +1833,8 @@ class ChatGptImageClient:
             raise RuntimeError("号池文本模型没有返回内容")
         return normalize_agent_plan(extract_json_object(content), payload.get("values") if isinstance(payload.get("values"), dict) else {})
 
-    def generate(self, prompt: str, model: str, ratio: str, references: list[dict]) -> list[dict]:
-        final_prompt = build_pool_image_prompt(prompt, ratio)
+    def generate(self, prompt: str, model: str, ratio: str, references: list[dict], resolution: str = "", quality: str = "", size: str = "") -> list[dict]:
+        final_prompt = build_pool_image_prompt(prompt, ratio, resolution, quality, size)
         uploaded = []
         for ref in references[:4]:
             filename = str(ref.get("url") or "").split("/references/", 1)[-1]
@@ -1892,9 +1905,30 @@ def generate_one_with_pool(job: dict, prompt: str, index: int) -> list[dict]:
         reference_ids = job.get("reference_ids") or []
         references = [r for r in read_references() if r.get("id") in reference_ids]
         client = ChatGptImageClient(token)
-        data = client.generate(prompt, job.get("model") or DEFAULT_MODEL, job.get("aspect_ratio") or "1:1", references)
+        data = client.generate(
+            prompt,
+            job.get("model") or DEFAULT_MODEL,
+            job.get("aspect_ratio") or "1:1",
+            references,
+            job.get("resolution") or "1K",
+            job.get("quality") or "auto",
+            job.get("size") or "",
+        )
         mark_pool_account_result(token, True)
-        update_job(job["id"], {"usage": {"source": "local_account_pool"}, "revised_prompt": prompt})
+        update_job(job["id"], {
+            "usage": {
+                "source": "local_account_pool",
+                "request_params": {
+                    "model": job.get("model") or DEFAULT_MODEL,
+                    "aspect_ratio": job.get("aspect_ratio") or "1:1",
+                    "resolution": job.get("resolution") or "1K",
+                    "size": job.get("size") or "",
+                    "quality": job.get("quality") or "auto",
+                    "note": "号池模式没有独立 size 参数，已写入最终提示词约束。",
+                },
+            },
+            "revised_prompt": prompt,
+        })
         return [save_image_payload(job["id"], index + i, normalize_image(item), prompt) for i, item in enumerate(data)]
     except Exception as exc:
         mark_pool_account_result(token, False, redact_secrets(str(exc)))
@@ -2113,6 +2147,26 @@ def normalize_image(item):
     return None
 
 
+def record_job_request_params(job_id: str, params: dict) -> None:
+    job = get_job(job_id) or {}
+    usage = job.get("usage") if isinstance(job.get("usage"), dict) else {}
+    next_usage = dict(usage)
+    next_usage["request_params"] = params
+    update_job(job_id, {"usage": next_usage})
+
+
+def merge_job_usage(job_id: str, upstream_usage) -> dict:
+    job = get_job(job_id) or {}
+    usage = job.get("usage") if isinstance(job.get("usage"), dict) else {}
+    next_usage = dict(usage)
+    if isinstance(upstream_usage, dict):
+        next_usage["upstream"] = upstream_usage
+    elif upstream_usage:
+        next_usage["upstream"] = upstream_usage
+    update_job(job_id, {"usage": next_usage})
+    return next_usage
+
+
 def save_image_payload(job_id: str, index: int, image_payload: dict, prompt: str) -> dict:
     ensure_data_dir()
     media_id = uuid.uuid4().hex
@@ -2130,6 +2184,8 @@ def save_image_payload(job_id: str, index: int, image_payload: dict, prompt: str
         resp.raise_for_status()
         path.write_bytes(resp.content)
         mime = resp.headers.get("Content-Type", mime).split(";")[0] or mime
+    width, height = image_dimensions(path)
+    actual_size = f"{width}x{height}" if width and height else ""
     return {
         "id": media_id,
         "job_id": job_id,
@@ -2139,6 +2195,15 @@ def save_image_payload(job_id: str, index: int, image_payload: dict, prompt: str
         "source_url": source_url,
         "mime": mime,
         "prompt": prompt,
+        "model": str(job.get("model") or ""),
+        "aspect_ratio": str(job.get("aspect_ratio") or "1:1"),
+        "resolution": str(job.get("resolution") or "1K"),
+        "size": str(job.get("size") or "1024x1024"),
+        "actual_size": actual_size,
+        "width": width,
+        "height": height,
+        "quality": str(job.get("quality") or "auto"),
+        "output_format": str(job.get("output_format") or "png"),
         "created_at": now_ts(),
     }
 
@@ -2174,6 +2239,16 @@ def post_image_edit(api_base: str, headers: dict, job: dict, prompt: str, refere
         data["quality"] = job["quality"]
     if job.get("output_format"):
         data["output_format"] = job["output_format"]
+    record_job_request_params(job["id"], {
+        "endpoint": "/v1/images/edits",
+        "model": data.get("model", ""),
+        "aspect_ratio": job.get("aspect_ratio") or "1:1",
+        "resolution": job.get("resolution") or "1K",
+        "size": data.get("size", ""),
+        "quality": data.get("quality", "auto"),
+        "output_format": data.get("output_format", ""),
+        "reference_count": len(ref_paths),
+    })
 
     last_resp = None
     for field_name in ("image", "image[]"):
@@ -2634,6 +2709,16 @@ def generate_one(job: dict, prompt: str, index: int) -> list[dict]:
             upstream_payload["quality"] = job["quality"]
         if job.get("output_format"):
             upstream_payload["output_format"] = job["output_format"]
+        record_job_request_params(job["id"], {
+            "endpoint": "/v1/images/generations",
+            "model": upstream_payload.get("model", ""),
+            "aspect_ratio": job.get("aspect_ratio") or "1:1",
+            "resolution": job.get("resolution") or "1K",
+            "size": upstream_payload.get("size", ""),
+            "quality": upstream_payload.get("quality", "auto"),
+            "output_format": upstream_payload.get("output_format", ""),
+            "reference_count": len(upstream_payload.get("reference_images") or []),
+        })
         resp = requests.post(
             urljoin(api_base + "/", "v1/images/generations"),
             headers={**headers, "Content-Type": "application/json"},
@@ -2643,7 +2728,8 @@ def generate_one(job: dict, prompt: str, index: int) -> list[dict]:
     if resp.status_code >= 400:
         raise RuntimeError(redact_secrets(f"New API {resp.status_code}: {resp.text[:1000]}"))
     data = resp.json()
-    update_job(job["id"], {"usage": data.get("usage"), "revised_prompt": data.get("revised_prompt")})
+    merge_job_usage(job["id"], data.get("usage"))
+    update_job(job["id"], {"revised_prompt": data.get("revised_prompt")})
     images = [normalize_image(item) for item in data.get("data", [])]
     images = [img for img in images if img]
     return [save_image_payload(job["id"], index + i, img, prompt) for i, img in enumerate(images)]

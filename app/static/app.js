@@ -753,12 +753,16 @@ const guideSteps = [
   },
 ];
 
-function requestSize() {
-  const baseSize = aspectSizes[els.aspectRatio.value] || aspectSizes["1:1"];
-  const multiplier = resolutionMultipliers[els.resolution.value] || 1;
+function requestSizeFor(aspectRatio, resolution) {
+  const baseSize = aspectSizes[aspectRatio] || aspectSizes["1:1"];
+  const multiplier = resolutionMultipliers[resolution] || 1;
   if (multiplier === 1) return baseSize;
   const [width, height] = baseSize.split("x").map(Number);
   return `${Math.round(width * multiplier)}x${Math.round(height * multiplier)}`;
+}
+
+function requestSize() {
+  return requestSizeFor(els.aspectRatio.value, els.resolution.value);
 }
 
 function describeAspect() {
@@ -2475,6 +2479,10 @@ function galleryItems() {
   };
   const mediaItems = visibleMedia.map((media) => {
     const job = jobById.get(media.job_id) || {};
+    const aspectRatio = media.aspect_ratio || job.aspect_ratio || "1:1";
+    const resolution = media.resolution || job.resolution || "1K";
+    const requestedSize = media.size || job.size || requestSizeFor(aspectRatio, resolution);
+    const actualSize = media.actual_size || "";
     return {
       kind: "media",
       id: `media:${media.id}`,
@@ -2486,9 +2494,11 @@ function galleryItems() {
       url: media.url,
       index: media.index,
       created_at: media.created_at,
-      aspect_ratio: media.aspect_ratio || "1:1",
-      resolution: media.resolution || "1K",
-      size: media.size || requestSize(),
+      aspect_ratio: aspectRatio,
+      resolution,
+      size: requestedSize,
+      actual_size: actualSize,
+      quality: media.quality || job.quality || "auto",
       ...agentInfo(job),
     };
   });
@@ -2511,6 +2521,7 @@ function galleryItems() {
         aspect_ratio: job.aspect_ratio || "1:1",
         resolution: job.resolution || "1K",
         size: job.size || "1024x1024",
+        quality: job.quality || "auto",
         ...agentInfo(job),
       }));
     });
@@ -2636,6 +2647,8 @@ function renderMedia() {
           <span>${escapeHtml(item.aspect_ratio)}</span>
           <span>${escapeHtml(item.resolution)}</span>
           <span>${escapeHtml(item.size)}</span>
+          ${item.actual_size ? `<span>实际 ${escapeHtml(item.actual_size)}</span>` : ""}
+          ${item.quality && item.quality !== "auto" ? `<span>${escapeHtml(item.quality)}</span>` : ""}
         </div>
         ${item.agentName ? `<div class="image-agent-tag">✣ ${escapeHtml(item.agentName)} ${item.agentVariant ? variantLabel(item.agentVariant) : ""}</div>` : ""}
         ${item.status === "error" ? `<div class="image-error">${escapeHtml(item.error || "生成失败")}</div>` : ""}
@@ -3326,8 +3339,6 @@ function recommendedPromptText() {
 }
 
 function setRecommendedParams({ quality = "auto", applyNow = false } = {}) {
-  els.aspectRatio.value = selectedAgent?.aspectRatio || "1:1";
-  els.resolution.value = "1K";
   els.outputFormat.value = "png";
   if (selectedAgent?.count && agentEnabled) {
     els.count.value = String(selectedAgent.count);
@@ -3752,8 +3763,6 @@ async function applyResearchToStudio() {
     }
     els.prompt.value = prompt;
     els.title.value = ($("#researchSubject")?.value || "科研图").trim();
-    if ([...els.aspectRatio.options].some((item) => item.value === "1:1")) els.aspectRatio.value = "1:1";
-    if ([...els.resolution.options].some((item) => item.value === "1K")) els.resolution.value = "1K";
     syncSummary();
     renderReferences();
     location.hash = "#studio";
@@ -3765,6 +3774,219 @@ async function applyResearchToStudio() {
       button.textContent = previousText;
     }
   }
+}
+
+let researchMermaidModule = null;
+let researchMermaidPromise = null;
+let researchDiagramRenderId = 0;
+
+function researchCleanDiagramLabel(value, fallback = "步骤") {
+  return String(value || fallback)
+    .replace(/\s+/g, " ")
+    .replace(/["'`[\]{}<>|]/g, "")
+    .trim()
+    .slice(0, 34) || fallback;
+}
+
+function extractResearchFlowSteps() {
+  const subject = researchCleanDiagramLabel($("#researchSubject")?.value, "研究对象");
+  const context = ($("#researchProjectContext")?.value || "").trim();
+  const rawItems = context
+    .split(/[\n\r。；;，,、>→\-]+/g)
+    .map((item) => researchCleanDiagramLabel(item))
+    .filter((item) => item.length >= 2 && !/^第?[一二三四五六七八九十0-9]+$/.test(item));
+  const unique = [];
+  rawItems.forEach((item) => {
+    if (!unique.some((existing) => existing === item || existing.includes(item) || item.includes(existing))) {
+      unique.push(item);
+    }
+  });
+  const defaults = ["研究问题", "样本/输入", "实验或模型处理", "关键变量读出", "结果验证", "结论输出"];
+  const steps = unique.length >= 3 ? unique.slice(0, 6) : [subject, ...defaults.slice(1, 6)];
+  return steps.slice(0, 7);
+}
+
+function buildResearchMermaidDiagram() {
+  const subject = researchCleanDiagramLabel($("#researchSubject")?.value, "科研流程");
+  const figureType = $("#researchFigureType")?.value || "workflow";
+  const direction = figureType === "mechanism" || figureType === "abstract" ? "TD" : "LR";
+  const steps = extractResearchFlowSteps();
+  const ids = ["A", "B", "C", "D", "E", "F", "G"];
+  const lines = [
+    `flowchart ${direction}`,
+    `  title["${subject}"]:::title`,
+    ...steps.map((step, index) => `  ${ids[index]}["${researchCleanDiagramLabel(step, `步骤 ${index + 1}`)}"]:::step`),
+    "  title --> A",
+    ...steps.slice(1).map((_, index) => `  ${ids[index]} --> ${ids[index + 1]}`),
+  ];
+  if (figureType === "mechanism" && steps.length >= 4) {
+    lines.push(`  ${ids[Math.min(steps.length - 2, 4)]} -.机制反馈.-> ${ids[1]}`);
+  }
+  if (figureType === "abstract" && steps.length >= 5) {
+    lines.push(`  ${ids[steps.length - 1]} --> output["论文图形摘要 / Graphical abstract"]:::output`);
+  }
+  lines.push(
+    "  classDef title fill:#0b8f72,stroke:#00665f,color:#ffffff,stroke-width:1px;",
+    "  classDef step fill:#ffffff,stroke:#8ccbbb,color:#15201d,stroke-width:1px;",
+    "  classDef output fill:#e8f8f2,stroke:#0b8f72,color:#063f3b,stroke-width:1px;"
+  );
+  return lines.join("\n");
+}
+
+async function loadResearchMermaid() {
+  if (researchMermaidModule) return researchMermaidModule;
+  if (researchMermaidPromise) return researchMermaidPromise;
+  researchMermaidPromise = import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")
+    .then((module) => {
+      researchMermaidModule = module.default || module;
+      researchMermaidModule.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "base",
+        themeVariables: {
+          primaryColor: "#ffffff",
+          primaryBorderColor: "#8ccbbb",
+          primaryTextColor: "#15201d",
+          lineColor: "#0b8f72",
+          fontFamily: "Inter, Arial, sans-serif",
+        },
+      });
+      return researchMermaidModule;
+    });
+  return researchMermaidPromise;
+}
+
+function renderResearchDiagramFallback(source) {
+  const nodeLabels = new Map();
+  const edges = [];
+  String(source || "").split(/\n+/).forEach((line) => {
+    const nodeMatches = [...line.matchAll(/\b([A-Za-z][\w-]*)\s*\["([^"]+)"\]/g)];
+    nodeMatches.forEach((match) => nodeLabels.set(match[1], match[2]));
+    const edge = line.match(/\b([A-Za-z][\w-]*)\b\s*(?:-->|-.+?\.->)\s*\b([A-Za-z][\w-]*)\b/);
+    if (edge) edges.push([edge[1], edge[2]]);
+  });
+  const orderedIds = [...nodeLabels.keys()].filter((id) => id !== "title" && id !== "output").slice(0, 7);
+  if (!orderedIds.length) orderedIds.push("A", "B", "C");
+  const width = Math.max(760, orderedIds.length * 170 + 120);
+  const height = 260;
+  const y = 102;
+  const boxes = orderedIds.map((id, index) => {
+    const x = 60 + index * 170;
+    const label = escapeHtml(nodeLabels.get(id) || `步骤 ${index + 1}`);
+    return `
+      <g>
+        <rect x="${x}" y="${y}" width="132" height="72" rx="10" fill="#fff" stroke="#8ccbbb"/>
+        <text x="${x + 66}" y="${y + 34}" text-anchor="middle" fill="#15201d" font-size="13" font-weight="700">${label}</text>
+      </g>`;
+  }).join("");
+  const arrows = orderedIds.slice(1).map((id, index) => {
+    const x1 = 60 + index * 170 + 132;
+    const x2 = 60 + (index + 1) * 170;
+    return `<path d="M${x1} ${y + 36} L${x2 - 10} ${y + 36}" fill="none" stroke="#0b8f72" stroke-width="2.5" marker-end="url(#arrow)"/>`;
+  }).join("");
+  const title = escapeHtml(nodeLabels.get("title") || researchCleanDiagramLabel($("#researchSubject")?.value, "科研流程"));
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${title}">
+      <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0b8f72"/></marker></defs>
+      <rect width="${width}" height="${height}" fill="#f7f7f5"/>
+      <text x="${width / 2}" y="48" text-anchor="middle" fill="#063f3b" font-size="18" font-weight="800">${title}</text>
+      ${arrows}
+      ${boxes}
+    </svg>`;
+}
+
+async function renderResearchDiagram() {
+  const sourceBox = $("#researchDiagramSource");
+  const preview = $("#researchDiagramPreview");
+  if (!sourceBox || !preview) return;
+  if (!sourceBox.value.trim()) sourceBox.value = buildResearchMermaidDiagram();
+  const source = sourceBox.value.trim();
+  preview.classList.add("loading");
+  preview.innerHTML = "<span>正在渲染流程图...</span>";
+  try {
+    const mermaid = await loadResearchMermaid();
+    const id = `research-diagram-${Date.now()}-${researchDiagramRenderId += 1}`;
+    const result = await mermaid.render(id, source);
+    preview.innerHTML = result.svg;
+    setResearchStatus("流程图已用 Mermaid 渲染，可导出 SVG 或 PNG");
+  } catch (err) {
+    preview.innerHTML = renderResearchDiagramFallback(source);
+    setResearchStatus("Mermaid 在线渲染不可用，已使用本地 SVG 兜底预览");
+  } finally {
+    preview.classList.remove("loading");
+  }
+}
+
+function ensureResearchDiagramNode() {
+  let node = document.querySelector('.research-node[data-node-id="diagram-preview"]');
+  if (!node) {
+    node = createResearchNode("diagram", { id: "diagram-preview", x: 1080, y: 160, w: 460 });
+  }
+  return node;
+}
+
+async function sendResearchDiagramToCanvas() {
+  const node = ensureResearchDiagramNode();
+  selectResearchNode(node);
+  await renderResearchDiagram();
+  setResearchStatus("流程图预览已放到画布");
+}
+
+function downloadResearchBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function currentResearchDiagramSvg() {
+  const svg = $("#researchDiagramPreview svg");
+  if (!svg) return "";
+  const clone = svg.cloneNode(true);
+  if (!clone.getAttribute("xmlns")) clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  return new XMLSerializer().serializeToString(clone);
+}
+
+async function exportResearchDiagramSvg() {
+  if (!$("#researchDiagramPreview svg")) await renderResearchDiagram();
+  const svgText = currentResearchDiagramSvg();
+  if (!svgText) return;
+  downloadResearchBlob(new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }), "research-flow-diagram.svg");
+  setResearchStatus("已导出 SVG 流程图");
+}
+
+async function exportResearchDiagramPng() {
+  if (!$("#researchDiagramPreview svg")) await renderResearchDiagram();
+  const svgText = currentResearchDiagramSvg();
+  if (!svgText) return;
+  const svg = $("#researchDiagramPreview svg");
+  const box = svg.viewBox?.baseVal;
+  const width = Math.max(900, Math.ceil(box?.width || svg.getBoundingClientRect().width || 1200));
+  const height = Math.max(520, Math.ceil(box?.height || svg.getBoundingClientRect().height || 720));
+  const img = new Image();
+  const url = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }));
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = url;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = width * 2;
+  canvas.height = height * 2;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(url);
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    downloadResearchBlob(blob, "research-flow-diagram.png");
+    setResearchStatus("已导出 PNG 流程图");
+  }, "image/png");
 }
 
 const researchCanvasState = {
@@ -3882,6 +4104,11 @@ function researchNodeTemplate(type, id) {
       title: "科研图草图",
       meta: "GENERATED-IMAGE",
       body: `<div class="research-generated-preview"></div><p>等待生成科研图草图。</p>`,
+    },
+    diagram: {
+      title: "流程图预览",
+      meta: "MERMAID-SVG",
+      body: `<div id="researchDiagramPreview" class="research-diagram-preview"></div><p>可复制 Mermaid 源码，也可导出 SVG/PNG 用于论文、PPT 或 Markdown。</p>`,
     },
     text: {
       title: "文本标注节点",
@@ -4009,8 +4236,8 @@ function autoLayoutResearchNodes() {
     [105, 210],
     [650, 82],
     [650, 475],
+    [1080, 160],
     [105, 560],
-    [1080, 250],
     [1080, 560],
   ];
   nodes.forEach((node, index) => {
@@ -4027,6 +4254,7 @@ function autoLayoutResearchNodes() {
 function saveResearchProject() {
   const payload = {
     prompt: $("#researchPrompt")?.value || "",
+    diagram: $("#researchDiagramSource")?.value || "",
     subject: $("#researchSubject")?.value || "",
     context: $("#researchProjectContext")?.value || "",
     nodes: [...document.querySelectorAll("#researchStage .research-node")].map((node) => ({
@@ -4050,6 +4278,7 @@ function loadResearchProject() {
   }
   const payload = JSON.parse(raw);
   if ($("#researchPrompt")) $("#researchPrompt").value = payload.prompt || "";
+  if ($("#researchDiagramSource")) $("#researchDiagramSource").value = payload.diagram || "";
   if ($("#researchSubject")) $("#researchSubject").value = payload.subject || "";
   if ($("#researchProjectContext")) $("#researchProjectContext").value = payload.context || "";
   const stage = $("#researchStage");
@@ -4069,6 +4298,7 @@ function loadResearchProject() {
   }
   renderResearchScssCards();
   updateResearchNodeCount();
+  renderResearchDiagram();
   setResearchStatus("已读取浏览器中保存的科研工程");
 }
 
@@ -4214,6 +4444,8 @@ function initResearchWorkbench() {
     renderResearchScssCards();
     setResearchStatus("已生成 S-C-S-S 科研绘图提示词");
   });
+  const diagramSource = $("#researchDiagramSource");
+  if (diagramSource && !diagramSource.value.trim()) diagramSource.value = buildResearchMermaidDiagram();
   ["researchSubject", "researchProjectContext", "researchFigureType", "researchStyle"].forEach((id) => {
     const el = $(`#${id}`);
     el?.addEventListener("input", renderResearchScssCards);
@@ -4229,6 +4461,18 @@ function initResearchWorkbench() {
     await navigator.clipboard?.writeText(text);
     setResearchStatus("提示词已复制");
   });
+  $("#researchBuildDiagram")?.addEventListener("click", () => {
+    if (diagramSource) diagramSource.value = buildResearchMermaidDiagram();
+    renderResearchDiagram();
+  });
+  $("#researchRenderDiagram")?.addEventListener("click", renderResearchDiagram);
+  $("#researchCopyDiagram")?.addEventListener("click", async () => {
+    const text = diagramSource?.value || "";
+    if (!text) return;
+    await navigator.clipboard?.writeText(text);
+    setResearchStatus("Mermaid 流程图源码已复制");
+  });
+  $("#researchSendDiagramNode")?.addEventListener("click", sendResearchDiagramToCanvas);
   $("#researchApplyToStudio")?.addEventListener("click", applyResearchToStudio);
   $("#researchApiButton")?.addEventListener("click", () => {
     location.hash = "#studio";
@@ -4246,6 +4490,8 @@ function initResearchWorkbench() {
     setResearchStatus("已定位到提示词仓库");
   });
   $("#researchGenerateAll")?.addEventListener("click", () => generateResearchOutputs(researchCanvasState.activeNode));
+  $("#researchExportSvg")?.addEventListener("click", exportResearchDiagramSvg);
+  $("#researchExportPng")?.addEventListener("click", exportResearchDiagramPng);
   $("#researchAutoLayout")?.addEventListener("click", autoLayoutResearchNodes);
   $("#researchSaveProject")?.addEventListener("click", saveResearchProject);
   $("#researchLoadProject")?.addEventListener("click", loadResearchProject);
@@ -4305,6 +4551,7 @@ function initResearchWorkbench() {
   });
   initResearchCanvasEngine();
   updateResearchNodeCount();
+  renderResearchDiagram();
 }
 
 els.prompt.addEventListener("input", syncSummary);

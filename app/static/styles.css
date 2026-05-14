@@ -6010,6 +6010,10 @@ body.research-active .research-workbench {
   width: 390px;
 }
 
+.research-node-diagram {
+  width: 460px;
+}
+
 .research-node-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -6125,6 +6129,35 @@ body.research-active .research-workbench {
   font-weight: 760;
   line-height: 1.45;
   text-align: center;
+}
+
+.research-diagram-preview {
+  display: grid;
+  min-height: 260px;
+  max-height: 420px;
+  place-items: center;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(0, 123, 114, .06) 1px, transparent 1px),
+    linear-gradient(rgba(0, 123, 114, .06) 1px, transparent 1px),
+    #fbfdfb;
+  background-size: 18px 18px;
+  color: var(--muted);
+  padding: 12px;
+}
+
+.research-diagram-preview.loading {
+  color: var(--green);
+  font-weight: 850;
+}
+
+.research-diagram-preview svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  min-width: 360px;
 }
 
 .preview-b {
