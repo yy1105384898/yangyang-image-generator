@@ -357,6 +357,56 @@ const aspectSizes = {
 };
 
 const resolutionMultipliers = { "1K": 1, "2K": 2, "4K": 4 };
+const GPT_IMAGE_2_MAX_EDGE = 3840;
+const GPT_IMAGE_2_MIN_PIXELS = 655360;
+const GPT_IMAGE_2_MAX_PIXELS = 8294400;
+
+function isGptImage2Model(model = "") {
+  const value = String(model || els.model?.value || "gpt-image-2").trim().toLowerCase();
+  return ["gpt-image-2", "codex-gpt-image-2"].includes(value);
+}
+
+function roundToMultiple(value, multiple = 16) {
+  return Math.max(multiple, Math.round(Number(value || 0) / multiple) * multiple);
+}
+
+function gptImage2SizeFor(aspectRatio, resolution) {
+  const [rw, rh] = String(aspectRatio || "1:1").split(":").map(Number);
+  let ratioW = Number.isFinite(rw) && rw > 0 ? rw : 1;
+  let ratioH = Number.isFinite(rh) && rh > 0 ? rh : 1;
+  if (Math.max(ratioW, ratioH) / Math.min(ratioW, ratioH) > 3) {
+    if (ratioW >= ratioH) ratioW = ratioH * 3;
+    else ratioH = ratioW * 3;
+  }
+  const targetLongEdge = { "1K": 1024, "2K": 2048, "4K": 3840 }[resolution] || 1024;
+  let width;
+  let height;
+  if (ratioW >= ratioH) {
+    width = targetLongEdge;
+    height = targetLongEdge * ratioH / ratioW;
+  } else {
+    height = targetLongEdge;
+    width = targetLongEdge * ratioW / ratioH;
+  }
+  width = roundToMultiple(width);
+  height = roundToMultiple(height);
+  if (width * height < GPT_IMAGE_2_MIN_PIXELS) {
+    const scale = Math.sqrt(GPT_IMAGE_2_MIN_PIXELS / Math.max(1, width * height));
+    width = roundToMultiple(width * scale);
+    height = roundToMultiple(height * scale);
+  }
+  if (width * height > GPT_IMAGE_2_MAX_PIXELS || Math.max(width, height) > GPT_IMAGE_2_MAX_EDGE) {
+    const scale = Math.min(GPT_IMAGE_2_MAX_EDGE / Math.max(width, height), Math.sqrt(GPT_IMAGE_2_MAX_PIXELS / Math.max(1, width * height)));
+    width = roundToMultiple(width * scale);
+    height = roundToMultiple(height * scale);
+  }
+  if (Math.max(width, height) > GPT_IMAGE_2_MAX_EDGE || width * height > GPT_IMAGE_2_MAX_PIXELS) {
+    const scale = Math.min(GPT_IMAGE_2_MAX_EDGE / Math.max(width, height), Math.sqrt(GPT_IMAGE_2_MAX_PIXELS / (width * height)));
+    width = roundToMultiple(width * scale);
+    height = roundToMultiple(height * scale);
+  }
+  return `${width}x${height}`;
+}
 
 const promptSkillLibrary = {
   productHero: {
@@ -754,6 +804,9 @@ const guideSteps = [
 ];
 
 function requestSizeFor(aspectRatio, resolution) {
+  if (isGptImage2Model(els.model?.value)) {
+    return gptImage2SizeFor(aspectRatio, resolution);
+  }
   const baseSize = aspectSizes[aspectRatio] || aspectSizes["1:1"];
   const multiplier = resolutionMultipliers[resolution] || 1;
   if (multiplier === 1) return baseSize;
@@ -776,23 +829,47 @@ function describeAspect() {
     "3:2": "相机横幅与产品场景",
     "9:16": "手机竖屏与短视频封面",
     "16:9": "宽屏封面和官网头图",
-    "21:9": "超宽视觉横幅",
-    "9:21": "长竖屏沉浸构图",
-    "4:1": "横向长图 Banner",
-    "1:4": "纵向长图物料",
-    "8:1": "超长横幅",
-    "1:8": "超长竖幅",
+    "21:9": isGptImage2Model(els.model?.value) ? "GPT Image 2 合法超宽构图" : "超宽视觉横幅",
+    "9:21": isGptImage2Model(els.model?.value) ? "GPT Image 2 合法长竖构图" : "长竖屏沉浸构图",
+    "4:1": isGptImage2Model(els.model?.value) ? "GPT Image 2 会压到 3:1 内" : "横向长图 Banner",
+    "1:4": isGptImage2Model(els.model?.value) ? "GPT Image 2 会压到 1:3 内" : "纵向长图物料",
+    "8:1": isGptImage2Model(els.model?.value) ? "GPT Image 2 不支持 8:1，会压到 3:1 内" : "超长横幅",
+    "1:8": isGptImage2Model(els.model?.value) ? "GPT Image 2 不支持 1:8，会压到 1:3 内" : "超长竖幅",
   };
   return labels[els.aspectRatio.value] || "按当前模型合法尺寸发送";
 }
 
 function describeResolution() {
   const descriptions = {
-    "1K": ["速度优先，适合批量预览", "当前模型会优先使用上游合法 size，避免不合法尺寸报错"],
-    "2K": ["细节更稳，适合正式方案筛选", "会按当前比例放大请求尺寸，失败时建议回到 1K"],
-    "4K": ["高细节输出，适合最终物料", "仅在上游模型支持时使用，成本和耗时更高"],
+    "1K": ["速度优先，适合批量预览", isGptImage2Model(els.model?.value) ? "GPT Image 2 会发送 16 倍数且合法像素范围内的 size" : "当前模型会优先使用上游合法 size，避免不合法尺寸报错"],
+    "2K": ["细节更稳，适合正式方案筛选", isGptImage2Model(els.model?.value) ? "GPT Image 2 会按比例放大并限制最大边 3840px" : "会按当前比例放大请求尺寸，失败时建议回到 1K"],
+    "4K": ["高细节输出，适合最终物料", isGptImage2Model(els.model?.value) ? "GPT Image 2 会自动压到最大 3840px 且不超过 8294400 像素" : "仅在上游模型支持时使用，成本和耗时更高"],
   };
   return descriptions[els.resolution.value] || descriptions["1K"];
+}
+
+function syncQualityOptionsForModel() {
+  if (!els.quality) return;
+  const current = els.quality.value || "auto";
+  const options = isGptImage2Model(els.model?.value)
+    ? [["auto", "auto"], ["low", "low"], ["medium", "medium"], ["high", "high"]]
+    : [["auto", "auto"], ["standard", "standard"], ["high", "high"], ["hd", "hd"]];
+  const values = options.map(([value]) => value);
+  if ([...els.quality.options].map((option) => option.value).join("|") !== values.join("|")) {
+    els.quality.innerHTML = "";
+    options.forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      els.quality.append(option);
+    });
+  }
+  els.quality.value = values.includes(current) ? current : (current === "hd" ? "high" : "auto");
+  if (els.quickQuality) {
+    els.quickQuality.innerHTML = "";
+    copyOptions(els.quality, els.quickQuality);
+    els.quickQuality.value = els.quality.value;
+  }
 }
 
 function copyOptions(source, target) {
@@ -886,6 +963,7 @@ function setQuickConfigPanel(open) {
 
 function syncSummary() {
   normalizeGenerationNumbers();
+  syncQualityOptionsForModel();
   const protocol = protocols[els.protocol.value] || protocols["custom-openai"];
   const hasPrompt = Boolean(els.prompt.value.trim());
   els.composer?.classList.toggle("has-prompt", hasPrompt);
@@ -3600,20 +3678,23 @@ const researchSkills = [
 ];
 
 function buildResearchPrompt() {
-  const subject = ($("#researchSubject")?.value || "科研流程").trim();
+  const subject = ($("#researchSubject")?.value || "").trim();
   const context = ($("#researchProjectContext")?.value || "").trim();
   const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研流程图";
   const style = $("#researchStyle")?.selectedOptions?.[0]?.textContent || "干净科研插图";
   const skill = researchSkills.find((item) => item.id === selectedResearchSkillId) || researchSkills[0];
+  if (!subject && !context) {
+    return "";
+  }
   const extracted = context
     ? context.replace(/\s+/g, " ").slice(0, 520)
-    : "未提供项目正文时，基于研究主题自行拆解核心对象、流程模块、关键变量和结论关系。";
+    : "未提供项目正文，请仅基于用户填写的绘图目标拆解核心对象、流程模块、关键变量和结论关系。";
   const base = [
     "请先读懂下面的项目内容，再生成科研流程图 Prompt，不要写成发散式思维导图，也不要直接泛泛描述。",
     `当前技能：${skill.name}。${skill.instruction}`,
     `项目内容：${extracted}`,
     "",
-    `S - Subject（主体）：${subject}。明确流程图要表达的核心研究对象、输入条件、处理过程、关键变量和最终输出。`,
+    `S - Subject（主体）：${subject || "根据项目内容提取主体"}。明确流程图要表达的核心研究对象、输入条件、处理过程、关键变量和最终输出。`,
     `C - Composition（构图）：生成一张${figureType}，采用左到右或上到下的线性/分层流程布局；每一步是一个模块，模块之间用箭头连接，箭头方向必须表达步骤推进、因果关系或数据/物料流。`,
     "S - Structure（结构细节）：拆出每个流程节点的输入、处理、输出、变量、读出指标和可局部放大的关键部位；需要标明主流程、支路、反馈或对照组，不添加无关模块。",
     `S - Style（风格渲染）：${style}，白色或浅色背景，构图干净，信息层级清楚，适合论文图、基金汇报或科研流程图初稿。`,
@@ -3626,14 +3707,14 @@ function buildResearchPrompt() {
 function renderResearchScssCards() {
   const wrap = $("#researchScssCards");
   if (!wrap) return;
-  const subject = ($("#researchSubject")?.value || "科研流程").trim();
+  const subject = ($("#researchSubject")?.value || "").trim();
   const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研流程图";
   const style = $("#researchStyle")?.selectedOptions?.[0]?.textContent || "科研插图风格";
   const context = ($("#researchProjectContext")?.value || "").trim();
   const cards = [
-    ["S", "Subject", subject],
-    ["C", "Composition", `${figureType}，按步骤排布，箭头连接输入、处理、结果和分支。`],
-    ["S", "Structure", context ? "按项目内容拆流程节点、变量、对照、输出和局部放大框。" : "粘贴项目内容后自动拆研究主线和流程节点。"],
+    ["S", "Subject", subject || "待填写绘图目标"],
+    ["C", "Composition", subject || context ? `${figureType}，按步骤排布，箭头连接输入、处理、结果和分支。` : "填写目标或摘要后生成构图建议。"],
+    ["S", "Structure", context ? "按项目内容拆流程节点、变量、对照、输出和局部放大框。" : "粘贴项目内容后拆研究主线和流程节点。"],
     ["S", "Style", style],
   ];
   wrap.innerHTML = cards.map(([letter, title, body]) => `
@@ -3744,7 +3825,7 @@ async function uploadResearchReference(file, name) {
 
 async function applyResearchToStudio() {
   const button = $("#researchApplyToStudio");
-  const prompt = ($("#researchPrompt")?.value || buildResearchPrompt()).trim();
+  const prompt = buildResearchGenerationPrompt();
   if (!prompt) return;
   const previousText = button?.textContent || "";
   if (button) {
@@ -3752,15 +3833,7 @@ async function applyResearchToStudio() {
     button.textContent = "发送中...";
   }
   try {
-    const lineFile = $("#researchLineInput")?.files?.[0];
-    const colorFile = $("#researchColorInput")?.files?.[0];
-    if (lineFile || colorFile) {
-      await Promise.all([
-        lineFile ? uploadResearchReference(lineFile, `科研线稿控制-${lineFile.name}`) : Promise.resolve(null),
-        colorFile ? uploadResearchReference(colorFile, `科研色稿控制-${colorFile.name}`) : Promise.resolve(null),
-      ]);
-      await loadState();
-    }
+    await uploadResearchControlReferences();
     els.prompt.value = prompt;
     els.title.value = ($("#researchSubject")?.value || "科研图").trim();
     syncSummary();
@@ -3789,8 +3862,9 @@ function researchCleanDiagramLabel(value, fallback = "步骤") {
 }
 
 function extractResearchFlowSteps() {
-  const subject = researchCleanDiagramLabel($("#researchSubject")?.value, "研究对象");
+  const subject = ($("#researchSubject")?.value || "").trim();
   const context = ($("#researchProjectContext")?.value || "").trim();
+  if (!subject && !context) return [];
   const rawItems = context
     .split(/[\n\r。；;，,、>→\-]+/g)
     .map((item) => researchCleanDiagramLabel(item))
@@ -3801,13 +3875,16 @@ function extractResearchFlowSteps() {
       unique.push(item);
     }
   });
-  const defaults = ["研究问题", "样本/输入", "实验或模型处理", "关键变量读出", "结果验证", "结论输出"];
-  const steps = unique.length >= 3 ? unique.slice(0, 6) : [subject, ...defaults.slice(1, 6)];
+  const defaults = ["样本/输入", "实验或模型处理", "关键变量读出", "结果验证", "结论输出"];
+  const steps = unique.length >= 3 ? unique.slice(0, 6) : [researchCleanDiagramLabel(subject, "研究对象"), ...defaults];
   return steps.slice(0, 7);
 }
 
 function buildResearchMermaidDiagram() {
-  const subject = researchCleanDiagramLabel($("#researchSubject")?.value, "科研流程");
+  const rawSubject = ($("#researchSubject")?.value || "").trim();
+  const context = ($("#researchProjectContext")?.value || "").trim();
+  if (!rawSubject && !context) return "";
+  const subject = researchCleanDiagramLabel(rawSubject || "科研流程");
   const figureType = $("#researchFigureType")?.value || "workflow";
   const direction = figureType === "mechanism" || figureType === "abstract" ? "TD" : "LR";
   const steps = extractResearchFlowSteps();
@@ -3901,6 +3978,12 @@ async function renderResearchDiagram() {
   if (!sourceBox || !preview) return;
   if (!sourceBox.value.trim()) sourceBox.value = buildResearchMermaidDiagram();
   const source = sourceBox.value.trim();
+  if (!source) {
+    preview.classList.remove("loading");
+    preview.innerHTML = "<span>填写绘图目标或论文摘要后生成流程图。</span>";
+    setResearchStatus("等待填写科研主题或项目内容");
+    return;
+  }
   preview.classList.add("loading");
   preview.innerHTML = "<span>正在渲染流程图...</span>";
   try {
@@ -3941,6 +4024,120 @@ function downloadResearchBlob(blob, filename) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildResearchGenerationPrompt() {
+  const prompt = ($("#researchPrompt")?.value || buildResearchPrompt()).trim();
+  const diagram = ($("#researchDiagramSource")?.value || "").trim();
+  if (!prompt && !diagram) return "";
+  const figureType = $("#researchFigureType")?.selectedOptions?.[0]?.textContent || "科研流程图";
+  const style = $("#researchStyle")?.selectedOptions?.[0]?.textContent || "干净科研插图";
+  const subject = ($("#researchSubject")?.value || "").trim();
+  const parts = [
+    prompt,
+    "",
+    "科研工作台生成要求：",
+    subject ? `绘图目标：${subject}` : "",
+    `图类型：${figureType}`,
+    `视觉风格：${style}`,
+    diagram ? `流程图结构参考（Mermaid）：\n${diagram}` : "",
+    "请严格保持科研逻辑、流程箭头方向、模块边界和标签区域；输出适合论文、基金汇报或 PPT 精修的科研图草图。",
+  ].filter(Boolean);
+  return parts.join("\n");
+}
+
+async function uploadResearchControlReferences() {
+  const lineFile = $("#researchLineInput")?.files?.[0];
+  const colorFile = $("#researchColorInput")?.files?.[0];
+  const uploads = [];
+  if (lineFile) uploads.push(uploadResearchReference(lineFile, `科研线稿控制-${lineFile.name}`));
+  if (colorFile) uploads.push(uploadResearchReference(colorFile, `科研色稿控制-${colorFile.name}`));
+  if (!uploads.length) return [];
+  const refs = await Promise.all(uploads);
+  await loadState();
+  renderReferences();
+  return refs.filter(Boolean);
+}
+
+async function submitResearchGenerationJob(sourceNode = null) {
+  if (submitInFlight) return null;
+  const nodePrompt = (sourceNode?.querySelector("textarea")?.value || "").trim();
+  const prompt = nodePrompt || buildResearchGenerationPrompt();
+  if (!prompt) {
+    setResearchStatus("请先填写绘图目标或论文摘要，再生成科研图");
+    $("#researchSubject")?.focus();
+    return null;
+  }
+  if (els.connectionMode.value === "pool" && !activePoolUser()) {
+    setResearchStatus("请先在商业生图台登录号池账号");
+    setConnectionStatus("请先登录号池账号", "error");
+    location.hash = "#studio";
+    return null;
+  }
+  saveApiKeyPreference();
+  const numbers = normalizeGenerationNumbers();
+  const button = $("#researchGenerateAll");
+  const previousText = button?.textContent || "";
+  submitInFlight = true;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "提交中...";
+  }
+  try {
+    await uploadResearchControlReferences();
+    const title = ($("#researchSubject")?.value || "科研图").trim();
+    const created = await api("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "single",
+        client_request_id: `research-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        title,
+        prompt,
+        model: els.model.value,
+        protocol: els.protocol.value,
+        connection_mode: els.connectionMode.value,
+        api_url: selectedApiUrl(),
+        api_key: selectedApiKey(),
+        agent_id: "research-workbench",
+        agent_name: "科研图工作台",
+        agent_variant: $("#researchFigureType")?.value || "",
+        agent_enabled: true,
+        aspect_ratio: els.aspectRatio.value,
+        resolution: els.resolution.value,
+        size: requestSize(),
+        quality: els.quality.value,
+        output_format: els.outputFormat.value,
+        count: numbers.count,
+        concurrency: numbers.concurrency,
+        retry_limit: numbers.retryLimit,
+        seed: els.seed.value.trim(),
+        negative: els.negative.value.trim(),
+        variants: buildVariants(),
+        reference_ids: Array.from(selectedReferenceIds),
+        edit_mode: Boolean(selectedReferenceIds.size),
+      }),
+    });
+    selectedHistoryJobId = created?.job?.id || null;
+    selectedGalleryIds.clear();
+    await loadState();
+    renderState();
+    generateResearchOutputs(sourceNode, {
+      force: true,
+      status: `科研图任务已提交到商业生图队列：${created?.job?.title || title}`,
+    });
+    setResearchStatus(`科研图任务已提交到商业生图队列：${created?.job?.title || title}`);
+    return created?.job || null;
+  } catch (err) {
+    setResearchStatus(err.message || "科研图任务提交失败");
+    alert(err.message || "科研图任务提交失败");
+    return null;
+  } finally {
+    submitInFlight = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
 }
 
 function currentResearchDiagramSvg() {
@@ -4083,12 +4280,12 @@ function researchNodeTemplate(type, id) {
     prompt: {
       title: "提示词节点",
       meta: "PROMPT",
-      body: `<textarea aria-label="提示词节点">${escapeHtml(promptText || "在这里整理 S-C-S-S 科研绘图 Prompt")}</textarea>`,
+      body: `<textarea aria-label="提示词节点" placeholder="在这里整理 S-C-S-S 科研绘图 Prompt">${escapeHtml(promptText)}</textarea>`,
     },
     "text-to-image": {
       title: "文生图节点",
       meta: "TEXT-TO-IMAGE",
-      body: `<textarea aria-label="文生图提示词">${escapeHtml(promptText || "生成科研流程图，展示研究主线、模块关系和结果。")}</textarea><button class="research-primary-button" data-research-generate-node="${escapeAttr(id)}" type="button">启动文生图</button>`,
+      body: `<textarea aria-label="文生图提示词" placeholder="填写科研绘图提示词后启动文生图">${escapeHtml(promptText)}</textarea><button class="research-primary-button" data-research-generate-node="${escapeAttr(id)}" type="button">启动文生图</button>`,
     },
     "image-to-image": {
       title: "图生图节点",
@@ -4174,11 +4371,20 @@ function optimizeResearchPromptText() {
 }
 
 function sendResearchPromptToCanvas() {
+  if (!($("#researchPrompt")?.value || "").trim() && !buildResearchPrompt()) {
+    setResearchStatus("请先填写绘图目标或论文摘要，再放到画布");
+    return;
+  }
   const node = createResearchNode("prompt", { x: 150, y: 150, w: 360 });
   if (node) setResearchStatus("已把当前提示词放到画布节点");
 }
 
-function generateResearchOutputs(sourceNode) {
+function generateResearchOutputs(sourceNode, options = {}) {
+  const availablePrompt = sourceNode?.querySelector("textarea")?.value || $("#researchPrompt")?.value || buildResearchPrompt();
+  if (!availablePrompt.trim() && !options.force) {
+    setResearchStatus("请先填写绘图目标或论文摘要，再生成科研图");
+    return;
+  }
   let outputs = document.querySelectorAll(".research-node-output .research-generated-preview");
   if (!outputs.length) {
     createResearchNode("output", { x: 650, y: 90, w: 390 });
@@ -4187,7 +4393,7 @@ function generateResearchOutputs(sourceNode) {
   }
   outputs.forEach((preview, index) => {
     preview.classList.toggle("generated", true);
-    const sourcePrompt = sourceNode?.querySelector("textarea")?.value || $("#researchPrompt")?.value || buildResearchPrompt();
+    const sourcePrompt = availablePrompt || buildResearchGenerationPrompt();
     const label = sourcePrompt.split("\n").find(Boolean)?.slice(0, 34) || "S-C-S-S 草图预览";
     preview.innerHTML = `<strong>科研图 ${index + 1}</strong><span>${escapeHtml(label)}</span>`;
     const node = preview.closest(".research-node");
@@ -4197,7 +4403,7 @@ function generateResearchOutputs(sourceNode) {
   const caption = document.querySelector(".research-tools .research-empty-box:not(textarea)");
   if (caption) caption.textContent = "图注候选：基于项目内容生成科研流程图，展示输入、处理、关键变量、结果读出与后期重绘结构。";
   selectResearchNode(sourceNode || document.querySelector(".research-node-output"));
-  setResearchStatus("已生成科研图草图预览，可继续局部重绘或高清放大");
+  setResearchStatus(options.status || "已生成科研图草图预览，可继续局部重绘或高清放大");
 }
 
 function handleResearchMode(mode) {
@@ -4435,7 +4641,6 @@ function initResearchWorkbench() {
   if (!$("#research")) return;
   const researchRoot = $("#research");
   const prompt = $("#researchPrompt");
-  if (prompt && !prompt.value.trim()) prompt.value = buildResearchPrompt();
   renderResearchPromptRepo();
   renderResearchSkills();
   renderResearchScssCards();
@@ -4445,7 +4650,6 @@ function initResearchWorkbench() {
     setResearchStatus("已生成 S-C-S-S 科研绘图提示词");
   });
   const diagramSource = $("#researchDiagramSource");
-  if (diagramSource && !diagramSource.value.trim()) diagramSource.value = buildResearchMermaidDiagram();
   ["researchSubject", "researchProjectContext", "researchFigureType", "researchStyle"].forEach((id) => {
     const el = $(`#${id}`);
     el?.addEventListener("input", renderResearchScssCards);
@@ -4489,7 +4693,7 @@ function initResearchWorkbench() {
     $("#researchPromptRepo")?.scrollIntoView({ block: "center", behavior: "smooth" });
     setResearchStatus("已定位到提示词仓库");
   });
-  $("#researchGenerateAll")?.addEventListener("click", () => generateResearchOutputs(researchCanvasState.activeNode));
+  $("#researchGenerateAll")?.addEventListener("click", () => submitResearchGenerationJob(researchCanvasState.activeNode));
   $("#researchExportSvg")?.addEventListener("click", exportResearchDiagramSvg);
   $("#researchExportPng")?.addEventListener("click", exportResearchDiagramPng);
   $("#researchAutoLayout")?.addEventListener("click", autoLayoutResearchNodes);
@@ -4546,7 +4750,7 @@ function initResearchWorkbench() {
     const generateButton = event.target.closest("[data-research-generate-node]");
     if (generateButton) {
       event.preventDefault();
-      generateResearchOutputs(generateButton.closest(".research-node"));
+      submitResearchGenerationJob(generateButton.closest(".research-node"));
     }
   });
   initResearchCanvasEngine();

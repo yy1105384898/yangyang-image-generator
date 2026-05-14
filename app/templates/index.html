@@ -211,7 +211,7 @@
           <button class="status-pill connection-status success" type="button">● 科研绘图就绪</button>
         </div>
         <div class="current-model">
-          <span>科研流程</span>
+          <span>未选择主题</span>
           <strong>S-C-S-S Prompt</strong>
         </div>
         <div class="topbar-cluster right">
@@ -255,7 +255,7 @@
             <div class="research-section-title"><span>02</span><strong>提示词生成</strong><em>待生成</em></div>
           <label class="research-field">
               <span>绘图目标</span>
-            <input id="researchSubject" value="200 L 不锈钢反应釜工艺流程" placeholder="例如：DSS 实验流程、细胞机制流程、反应釜工艺路线">
+            <input id="researchSubject" placeholder="例如：DSS 实验流程、细胞机制流程、反应釜工艺路线">
           </label>
           <label class="research-field">
               <span>论文摘要 / 项目内容</span>
@@ -361,7 +361,7 @@
                   <select><option>gpt-image-2</option><option>gpt-5.5</option></select>
                   <button type="button" data-research-remove-node>×</button>
                 </div>
-                <textarea aria-label="节点提示词">生成科研流程图，展示实验流程、关键变量和主要结论</textarea>
+                <textarea aria-label="节点提示词" placeholder="填写研究主题或摘要后，在左侧生成科研绘图提示词。"></textarea>
                 <div class="research-node-grid">
                   <label>比例<select><option>16:9</option><option>1:1</option></select></label>
                   <label>尺寸<input value="2048 x 1152"></label>
@@ -845,7 +845,7 @@
             <small>当前模型会优先使用上游合法 size，避免不合法尺寸报错</small>
           </div>
           <div class="settings-grid">
-            <label><span>质量</span><select id="quality"><option value="auto">auto</option><option value="standard">standard</option><option value="high">high</option><option value="hd">hd</option></select></label>
+            <label><span>质量</span><select id="quality"><option value="auto">auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
             <label><span>格式</span><select id="outputFormat"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select></label>
               <label><span>张数</span><input id="count" type="number" min="1" max="20" value="1"></label>
           </div>

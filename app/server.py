@@ -1438,6 +1438,113 @@ def build_pool_image_prompt(prompt: str, ratio: str, resolution: str = "", quali
     return "\n\n".join([prompt.strip(), *extras]) if extras else prompt.strip()
 
 
+GPT_IMAGE_2_MIN_PIXELS = 655_360
+GPT_IMAGE_2_MAX_PIXELS = 8_294_400
+GPT_IMAGE_2_MAX_EDGE = 3840
+GPT_IMAGE_2_QUALITIES = {"auto", "low", "medium", "high"}
+
+
+def is_gpt_image_2_model(model: str) -> bool:
+    return str(model or "").strip().lower() in {"gpt-image-2", "codex-gpt-image-2"}
+
+
+def parse_size(size: str) -> tuple[int, int] | None:
+    match = re.match(r"^\s*(\d{2,5})\s*x\s*(\d{2,5})\s*$", str(size or ""), re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def round_multiple(value: float, multiple: int = 16) -> int:
+    return max(multiple, int(round(float(value) / multiple)) * multiple)
+
+
+def legalize_gpt_image_2_size(size: str, aspect_ratio: str = "1:1", resolution: str = "1K") -> str:
+    ratio_match = re.match(r"^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*$", str(aspect_ratio or "1:1"))
+    if ratio_match:
+        ratio_w, ratio_h = float(ratio_match.group(1)), float(ratio_match.group(2))
+    else:
+        parsed = parse_size(size)
+        ratio_w, ratio_h = parsed if parsed else (1.0, 1.0)
+    ratio_w = max(1.0, float(ratio_w))
+    ratio_h = max(1.0, float(ratio_h))
+    if max(ratio_w, ratio_h) / min(ratio_w, ratio_h) > 3:
+        if ratio_w >= ratio_h:
+            ratio_w = ratio_h * 3
+        else:
+            ratio_h = ratio_w * 3
+    target_long_edge = {"1K": 1024, "2K": 2048, "4K": 3840}.get(str(resolution or "1K"), 1024)
+    if ratio_w >= ratio_h:
+        width = float(target_long_edge)
+        height = width * ratio_h / ratio_w
+    else:
+        height = float(target_long_edge)
+        width = height * ratio_w / ratio_h
+    width = max(16, float(width))
+    height = max(16, float(height))
+    width = round_multiple(width)
+    height = round_multiple(height)
+    min_scale = max(1.0, (GPT_IMAGE_2_MIN_PIXELS / max(1, width * height)) ** 0.5)
+    width = round_multiple(width * min_scale)
+    height = round_multiple(height * min_scale)
+    if max(width, height) > GPT_IMAGE_2_MAX_EDGE or width * height > GPT_IMAGE_2_MAX_PIXELS:
+        scale = min(GPT_IMAGE_2_MAX_EDGE / max(width, height), (GPT_IMAGE_2_MAX_PIXELS / max(1, width * height)) ** 0.5)
+        width = round_multiple(width * scale)
+        height = round_multiple(height * scale)
+    return f"{width}x{height}"
+
+
+def normalize_image_request_options(job: dict, endpoint: str = "") -> tuple[dict, dict]:
+    model = str(job.get("model") or DEFAULT_MODEL).strip()
+    size = str(job.get("size") or "1024x1024").strip()
+    quality = str(job.get("quality") or "auto").strip().lower()
+    output_format = str(job.get("output_format") or "png").strip().lower()
+    options: dict = {
+        "model": model,
+        "size": size,
+        "quality": quality,
+        "output_format": output_format,
+    }
+    note = ""
+    if is_gpt_image_2_model(model):
+        original_size = size
+        size = legalize_gpt_image_2_size(size, job.get("aspect_ratio") or "1:1", job.get("resolution") or "1K")
+        quality_map = {"standard": "medium", "hd": "high"}
+        quality = quality_map.get(quality, quality)
+        if quality not in GPT_IMAGE_2_QUALITIES:
+            quality = "auto"
+        output_format = output_format if output_format in {"png", "jpeg", "webp"} else "png"
+        background = str(job.get("background") or "auto").strip().lower() or "auto"
+        moderation = str(job.get("moderation") or "auto").strip().lower() or "auto"
+        options.update({
+            "size": size,
+            "quality": quality,
+            "output_format": output_format,
+            "background": background if background in {"auto", "opaque"} else "auto",
+            "moderation": moderation if moderation in {"auto", "low"} else "auto",
+        })
+        if output_format in {"jpeg", "webp"}:
+            try:
+                compression = int(job.get("output_compression") or 0)
+            except (TypeError, ValueError):
+                compression = 0
+            if compression:
+                options["output_compression"] = max(0, min(compression, 100))
+        if size != original_size:
+            note = f"gpt-image-2 size 已从 {original_size} 调整为合法尺寸 {size}"
+    return options, {
+        "model": model,
+        "size": options.get("size", size),
+        "quality": options.get("quality", quality),
+        "output_format": options.get("output_format", output_format),
+        "background": options.get("background", ""),
+        "moderation": options.get("moderation", ""),
+        "output_compression": options.get("output_compression", ""),
+        "note": note,
+        "endpoint": endpoint,
+    }
+
+
 class ChatGptImageClient:
     def __init__(self, access_token: str) -> None:
         self.base_url = "https://chatgpt.com"
@@ -2234,19 +2341,17 @@ def post_image_edit(api_base: str, headers: dict, job: dict, prompt: str, refere
     ref_paths = reference_paths(references)
     if not ref_paths:
         raise RuntimeError("参考图文件不存在，请重新上传参考图")
-    data = {"model": job["model"], "prompt": prompt, "size": job["size"], "n": "1"}
-    if job.get("quality") and job["quality"] != "auto":
-        data["quality"] = job["quality"]
-    if job.get("output_format"):
-        data["output_format"] = job["output_format"]
+    request_options, request_meta = normalize_image_request_options(job, "/v1/images/edits")
+    data = {"model": request_options["model"], "prompt": prompt, "size": request_options["size"], "n": "1"}
+    if request_options.get("quality") and request_options["quality"] != "auto":
+        data["quality"] = request_options["quality"]
+    for key in ("output_format", "output_compression", "background", "moderation"):
+        if request_options.get(key):
+            data[key] = request_options[key]
     record_job_request_params(job["id"], {
-        "endpoint": "/v1/images/edits",
-        "model": data.get("model", ""),
+        **request_meta,
         "aspect_ratio": job.get("aspect_ratio") or "1:1",
         "resolution": job.get("resolution") or "1K",
-        "size": data.get("size", ""),
-        "quality": data.get("quality", "auto"),
-        "output_format": data.get("output_format", ""),
         "reference_count": len(ref_paths),
     })
 
@@ -2696,27 +2801,25 @@ def generate_one(job: dict, prompt: str, index: int) -> list[dict]:
     if use_edit:
         resp = post_image_edit(api_base, headers, job, prompt, references)
     else:
+        request_options, request_meta = normalize_image_request_options(job, "/v1/images/generations")
         upstream_payload = {
-            "model": job["model"],
+            "model": request_options["model"],
             "prompt": prompt,
             "n": 1,
-            "size": job["size"],
+            "size": request_options["size"],
         }
         if references:
             upstream_payload["reference_images"] = [reference_to_data_url(ref) for ref in references[:4]]
             upstream_payload["reference_images"] = [item for item in upstream_payload["reference_images"] if item]
-        if job.get("quality") and job["quality"] != "auto":
-            upstream_payload["quality"] = job["quality"]
-        if job.get("output_format"):
-            upstream_payload["output_format"] = job["output_format"]
+        if request_options.get("quality") and request_options["quality"] != "auto":
+            upstream_payload["quality"] = request_options["quality"]
+        for key in ("output_format", "output_compression", "background", "moderation"):
+            if request_options.get(key):
+                upstream_payload[key] = request_options[key]
         record_job_request_params(job["id"], {
-            "endpoint": "/v1/images/generations",
-            "model": upstream_payload.get("model", ""),
+            **request_meta,
             "aspect_ratio": job.get("aspect_ratio") or "1:1",
             "resolution": job.get("resolution") or "1K",
-            "size": upstream_payload.get("size", ""),
-            "quality": upstream_payload.get("quality", "auto"),
-            "output_format": upstream_payload.get("output_format", ""),
             "reference_count": len(upstream_payload.get("reference_images") or []),
         })
         resp = requests.post(
@@ -3593,6 +3696,19 @@ def create_job():
         )
         if existing:
             return jsonify({"job": public_job(existing)})
+    requested_model = str(payload.get("model") or DEFAULT_MODEL).strip()
+    requested_job_options = {
+        "model": requested_model,
+        "aspect_ratio": str(payload.get("aspect_ratio") or "1:1").strip(),
+        "resolution": str(payload.get("resolution") or "1K").strip(),
+        "size": str(payload.get("size") or "1024x1024").strip(),
+        "quality": str(payload.get("quality") or "auto").strip(),
+        "output_format": str(payload.get("output_format") or "png").strip(),
+        "background": str(payload.get("background") or "auto").strip(),
+        "moderation": str(payload.get("moderation") or "auto").strip(),
+        "output_compression": payload.get("output_compression") or "",
+    }
+    normalized_options, _normalized_meta = normalize_image_request_options(requested_job_options)
     job = {
         "id": uuid.uuid4().hex,
         "client_request_id": client_request_id,
@@ -3618,12 +3734,15 @@ def create_job():
         "style": str(payload.get("style") or "").strip(),
         "negative": str(payload.get("negative") or "").strip(),
         "subject_id": str(payload.get("subject_id") or "").strip(),
-        "model": str(payload.get("model") or DEFAULT_MODEL).strip(),
-        "aspect_ratio": str(payload.get("aspect_ratio") or "1:1").strip(),
-        "resolution": str(payload.get("resolution") or "1K").strip(),
-        "size": str(payload.get("size") or "1024x1024").strip(),
-        "quality": str(payload.get("quality") or "auto").strip(),
-        "output_format": str(payload.get("output_format") or "png").strip(),
+        "model": requested_model,
+        "aspect_ratio": requested_job_options["aspect_ratio"],
+        "resolution": requested_job_options["resolution"],
+        "size": str(normalized_options.get("size") or requested_job_options["size"]),
+        "quality": str(normalized_options.get("quality") or requested_job_options["quality"]),
+        "output_format": str(normalized_options.get("output_format") or requested_job_options["output_format"]),
+        "background": str(normalized_options.get("background") or requested_job_options["background"]),
+        "moderation": str(normalized_options.get("moderation") or requested_job_options["moderation"]),
+        "output_compression": str(normalized_options.get("output_compression") or requested_job_options["output_compression"]),
         "count": count,
         "concurrency": max(1, min(int(payload.get("concurrency") or 2), 6)),
         "retry_limit": max(0, min(int(payload.get("retry_limit") or 2), 5)),
@@ -3679,6 +3798,19 @@ def retry_job(job_id):
         resolved_api_url, resolve_errors = "local-account-pool", []
     else:
         resolved_api_url, resolve_errors = resolve_api_url(connection_mode, api_url, api_key)
+    retry_model = str(payload.get("model") or source.get("model") or DEFAULT_MODEL).strip()
+    retry_options = {
+        "model": retry_model,
+        "aspect_ratio": str(source.get("aspect_ratio") or "1:1").strip(),
+        "resolution": str(source.get("resolution") or "1K").strip(),
+        "size": str(source.get("size") or "1024x1024").strip(),
+        "quality": str(source.get("quality") or "auto").strip(),
+        "output_format": str(source.get("output_format") or "png").strip(),
+        "background": str(source.get("background") or "auto").strip(),
+        "moderation": str(source.get("moderation") or "auto").strip(),
+        "output_compression": source.get("output_compression") or "",
+    }
+    normalized_retry_options, _retry_meta = normalize_image_request_options(retry_options)
     retry_count = int(source.get("retry_count") or 0) + 1
     job = {
         "id": uuid.uuid4().hex,
@@ -3704,12 +3836,15 @@ def retry_job(job_id):
         "style": str(source.get("style") or "").strip(),
         "negative": str(source.get("negative") or "").strip(),
         "subject_id": str(source.get("subject_id") or "").strip(),
-        "model": str(payload.get("model") or source.get("model") or DEFAULT_MODEL).strip(),
-        "aspect_ratio": str(source.get("aspect_ratio") or "1:1").strip(),
-        "resolution": str(source.get("resolution") or "1K").strip(),
-        "size": str(source.get("size") or "1024x1024").strip(),
-        "quality": str(source.get("quality") or "auto").strip(),
-        "output_format": str(source.get("output_format") or "png").strip(),
+        "model": retry_model,
+        "aspect_ratio": retry_options["aspect_ratio"],
+        "resolution": retry_options["resolution"],
+        "size": str(normalized_retry_options.get("size") or retry_options["size"]),
+        "quality": str(normalized_retry_options.get("quality") or retry_options["quality"]),
+        "output_format": str(normalized_retry_options.get("output_format") or retry_options["output_format"]),
+        "background": str(normalized_retry_options.get("background") or retry_options["background"]),
+        "moderation": str(normalized_retry_options.get("moderation") or retry_options["moderation"]),
+        "output_compression": str(normalized_retry_options.get("output_compression") or retry_options["output_compression"]),
         "count": max(1, min(int(source.get("count") or 1), 20)),
         "concurrency": max(1, min(int(source.get("concurrency") or 2), 6)),
         "retry_limit": max(0, min(int(payload.get("retry_limit") or source.get("retry_limit") or 2), 5)),
