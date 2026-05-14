@@ -1594,6 +1594,30 @@ function promptSkillIdsForAgent(agent) {
   return agent?.skillIds || defaultPromptSkills[agent?.id] || defaultPromptSkills.custom;
 }
 
+function customAgentDisplayName(values = null) {
+  const raw = String(values?.subject || $("#agentSubject")?.value || selectedAgent?.fields?.subject || "").trim();
+  const cleaned = raw
+    .replace(/[，。；、,.，:：!！?？\n\r]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  const name = cleaned.length > 14 ? `${cleaned.slice(0, 14)}…` : cleaned;
+  return `自定义 · ${name}`;
+}
+
+function syncCustomAgentName(values = null) {
+  if (!selectedAgent || !String(selectedAgent.id || "").startsWith("custom-")) return;
+  const name = customAgentDisplayName(values);
+  if (!name || selectedAgent.name === name) return;
+  selectedAgent = {
+    ...selectedAgent,
+    name,
+    meta: "动态行业 · 已命名",
+    prompt: `根据“${name.replace(/^自定义 · /, "")}”生成商业生图方案，兼顾主体清晰、平台用途、卖点表达和可交付质感。`,
+  };
+  customIndustryAgent = selectedAgent;
+}
+
 function renderPromptSkillChips(activeSkillIds = new Set(), { preview = false, limit = 0 } = {}) {
   const entries = Object.entries(promptSkillLibrary);
   const filtered = limit ? entries.slice(0, limit) : entries;
@@ -1930,6 +1954,7 @@ async function generateAgentPlan() {
   const values = agentPlan?.values || null;
   agentPlanRevision += 1;
   const nextValues = values || readAgentValues();
+  syncCustomAgentName(nextValues);
   const fallbackPlan = makeAgentPlan(nextValues, agentPlanRevision);
   els.applyAgent.disabled = true;
   els.applyAgent.textContent = "✣ 正在生成方案...";
@@ -1964,7 +1989,11 @@ function previewAgentVariantCard(variantId = "stable") {
 function applyAgentVariant(variantId = "stable") {
   if (!selectedAgent || !agentPlan) return;
   const variant = agentPlan.variants.find((item) => item.id === variantId) || agentPlan.variants[0];
+  syncCustomAgentName(agentPlan.values);
   els.prompt.value = variant.prompt;
+  if (!els.title.value.trim()) {
+    els.title.value = selectedAgent.name;
+  }
   els.aspectRatio.value = selectedAgent.aspectRatio;
   els.count.value = selectedAgent.count;
   if ([...els.quality.options].some((option) => option.value === "high")) {
@@ -2546,11 +2575,12 @@ async function performSubmitJob(promptOverride = "") {
   els.submitJob.disabled = true;
   els.submitJob.textContent = "…";
   try {
+    const title = els.title.value.trim() || (agentEnabled && selectedAgent ? selectedAgent.name : "");
     const created = await api("/api/jobs", {
       method: "POST",
       body: JSON.stringify({
         mode: "single",
-        title: els.title.value.trim(),
+        title,
         prompt,
         model: els.model.value,
         protocol: els.protocol.value,

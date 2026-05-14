@@ -2330,13 +2330,13 @@ body.research-active .studio-view {
   min-height: 430px;
   background: linear-gradient(180deg, rgba(246,255,252,.58), rgba(255,255,255,.62));
 }
-.agent-empty-select span {
+.agent-empty-select > span {
   font-size: 34px !important;
 }
-.agent-empty-select strong {
+.agent-empty-select > strong {
   font-size: 24px !important;
 }
-.agent-empty-select p {
+.agent-empty-select > p {
   max-width: 520px !important;
   font-size: 16px !important;
 }
@@ -2466,12 +2466,12 @@ body.research-active .studio-view {
 }
 .agent-skill-section strong {
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 840;
 }
 .agent-skill-section span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.45;
 }
 .agent-skill-list {
@@ -2497,11 +2497,11 @@ body.research-active .studio-view {
   padding-top: 2px;
 }
 .agent-skill-group-title strong {
-  font-size: 13px;
+  font-size: 12px;
 }
 .agent-skill-group-title small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 .agent-skill-chip {
   display: flex;
@@ -2530,7 +2530,7 @@ body.research-active .studio-view {
 .agent-skill-chip small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
 }
 .agent-skill-preview-chip {
@@ -2552,7 +2552,7 @@ body.research-active .studio-view {
 }
 .agent-skill-preview-chip small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
 }
 .agent-generated-view {
@@ -2652,15 +2652,15 @@ body.research-active .studio-view {
 .agent-form-grid-compact {
   margin-top: 8px;
 }
-.agent-empty-select span {
+.agent-empty-select > span {
   color: var(--green);
   font-size: 24px;
 }
-.agent-empty-select strong {
+.agent-empty-select > strong {
   color: var(--text);
   font-size: 17px;
 }
-.agent-empty-select p {
+.agent-empty-select > p {
   max-width: 440px;
   margin: 0;
   font-size: 13px;
