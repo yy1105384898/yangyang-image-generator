@@ -19,47 +19,11 @@ services:
       - ./data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      default:
-      newapi:
-
-  yangyang-image-generator-proxy:
-    image: python:3.12-alpine
-    container_name: yangyang-image-generator-proxy
-    restart: unless-stopped
-    depends_on:
-      - yangyang-image-generator
-    command:
-      - python
-      - -c
-      - |
-        import select, socket, threading
-        TARGET = ("yangyang-image-generator", 3012)
-        def pipe(client):
-            upstream = socket.create_connection(TARGET, timeout=10)
-            sockets = [client, upstream]
-            try:
-                while True:
-                    readable, _, _ = select.select(sockets, [], [], 60)
-                    for source in readable:
-                        data = source.recv(65536)
-                        if not data:
-                            return
-                        (upstream if source is client else client).sendall(data)
-            finally:
-                client.close()
-                upstream.close()
-        server = socket.socket()
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind(("0.0.0.0", 3012))
-        server.listen(128)
-        while True:
-            client, _ = server.accept()
-            threading.Thread(target=pipe, args=(client,), daemon=True).start()
     ports:
       - "3012:3012"
     networks:
-      - default
+      default:
+      newapi:
 
 networks:
   newapi:
