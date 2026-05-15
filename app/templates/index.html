@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YANGYANGAPI 生图工作台</title>
   <link rel="icon" href="{{ url_for('static', filename='v20260510151225993-sumapi-logo-C29H2E54.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=2026051406">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=202605151548">
 </head>
 <body>
   <main id="home" class="home-page">
@@ -284,10 +284,8 @@
             </div>
             <label class="research-field">
               <span>提示词模型</span>
-              <select>
-                <option>gpt-5.5</option>
-                <option>gpt-5.4</option>
-                <option>gpt-image-2</option>
+              <select id="researchTextModel">
+                <option value="">沿用商业图工作台文本模型</option>
               </select>
             </label>
             <button id="researchBuildPrompt" class="research-primary-button" type="button">生成科研绘图提示词</button>
@@ -345,29 +343,26 @@
               <button id="researchExportPng" type="button">导出 PNG</button>
               <button id="researchAutoLayout" type="button">重排版</button>
               <button id="researchLoadProject" type="button">工程</button>
+              <button id="researchResetProject" type="button">恢复默认</button>
               <button id="researchSaveProject" class="research-save-button" type="button">保存工程</button>
             </div>
           </div>
           <div class="research-canvas" id="researchCanvas" tabindex="0" aria-label="科研绘图无限画布">
             <div class="research-stage" id="researchStage">
               <div class="research-grid"></div>
-              <svg class="research-links" viewBox="0 0 1180 820" aria-hidden="true">
-                <path d="M392 360 C 520 360, 520 190, 650 190" />
-                <path d="M392 360 C 522 360, 520 565, 650 565" />
-              </svg>
+              <svg class="research-links" id="researchLinks" viewBox="0 0 1800 980" aria-hidden="true"></svg>
               <article class="research-node research-node-prompt" data-node-id="prompt" data-x="105" data-y="210" data-w="340">
                 <div class="research-node-head">
                   <div><strong>文生图节点</strong><small>TEXT-TO-IMAGE</small></div>
-                  <select><option>gpt-image-2</option><option>gpt-5.5</option></select>
+                  <select class="research-image-model-select"><option>未检测到生图模型</option></select>
                   <button type="button" data-research-remove-node>×</button>
                 </div>
                 <textarea aria-label="节点提示词" placeholder="填写研究主题或摘要后，在左侧生成科研绘图提示词。"></textarea>
                 <div class="research-node-grid">
                   <label>比例<select><option>16:9</option><option>1:1</option></select></label>
-                  <label>尺寸<input value="2048 x 1152"></label>
+                  <label>分辨率<select><option>2K</option><option>1K</option><option>4K</option></select></label>
                   <label>质量<select><option>Medium</option><option>High</option></select></label>
                   <label>格式<select><option>PNG</option><option>WEBP</option></select></label>
-                  <label>数量<select><option>2</option><option>1</option></select></label>
                   <label>背景<select><option>Auto</option><option>透明</option></select></label>
                 </div>
                 <button class="research-primary-button" data-research-generate-node="prompt" type="button">启动文生图</button>
@@ -378,22 +373,10 @@
               <article class="research-node research-node-output" data-node-id="output-a" data-x="650" data-y="82" data-w="390">
                 <div class="research-node-head">
                   <div><strong>科研图 1</strong><small>GENERATED-IMAGE</small></div>
-                  <select><option>gpt-image-2</option></select>
+                  <span class="research-output-badge">输出</span>
                   <button type="button" data-research-remove-node>×</button>
                 </div>
                 <div class="research-generated-preview preview-a"></div>
-                <p>分辨率: 2048 x 1152</p>
-                <span class="research-port in">IN</span>
-                <span class="research-port out">OUT</span>
-                <button class="research-resize-handle" type="button" aria-label="缩放节点"></button>
-              </article>
-              <article class="research-node research-node-output" data-node-id="output-b" data-x="650" data-y="475" data-w="390">
-                <div class="research-node-head">
-                  <div><strong>科研图 2</strong><small>GENERATED-IMAGE</small></div>
-                  <select><option>gpt-image-2</option></select>
-                  <button type="button" data-research-remove-node>×</button>
-                </div>
-                <div class="research-generated-preview preview-b"></div>
                 <p>分辨率: 2048 x 1152</p>
                 <span class="research-port in">IN</span>
                 <span class="research-port out">OUT</span>
@@ -425,18 +408,17 @@
             <div class="research-section-title"><span>03</span><strong>对象检查器</strong><em>未选中</em></div>
             <label class="research-field">
               <span>标题</span>
-              <input value="对象标题">
+              <input id="researchInspectorTitle" value="对象标题">
             </label>
             <label class="research-field">
               <span>节点模型</span>
-              <select>
-                <option>gpt-image-2</option>
-                <option>gpt-5.5</option>
+              <select class="research-image-model-select">
+                <option>未检测到生图模型</option>
               </select>
             </label>
             <label class="research-field">
               <span>编辑指令</span>
-              <textarea rows="4" placeholder="例如：把右侧改成三步流程，保留标签和配色。"></textarea>
+              <textarea id="researchInspectorText" rows="4" placeholder="选中节点后可编辑节点文本或提示词。"></textarea>
             </label>
             <label class="research-field">
               <span>放大倍数</span>
@@ -932,6 +914,6 @@
   <script>
     window.YY_MODEL_CONFIG = {{ model_config|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='app.js') }}?v=2026051406"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=202605151548"></script>
 </body>
 </html>

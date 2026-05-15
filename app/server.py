@@ -2228,6 +2228,12 @@ def build_prompt(payload: dict) -> str:
     return "\n".join(parts)
 
 
+def build_prompt_with_base(payload: dict, prompt: str) -> str:
+    next_payload = dict(payload or {})
+    next_payload["prompt"] = str(prompt or "").strip()
+    return build_prompt(next_payload)
+
+
 def estimate_cost(model: str, image_count: int) -> dict:
     rates = {
         "gpt-image-2": 0.25,
@@ -2785,6 +2791,348 @@ def call_agent_text_model_with_pool(model: str, payload: dict) -> dict:
         raise
 
 
+def collect_pool_text_response(resp) -> str:
+    content = ""
+    try:
+        for raw in iter_sse_payloads(resp):
+            if raw == "[DONE]":
+                break
+            try:
+                event = json.loads(raw)
+            except Exception:
+                continue
+            value = event.get("v") if isinstance(event, dict) else None
+            for candidate in (value, event):
+                if not isinstance(candidate, dict):
+                    continue
+                message = candidate.get("message")
+                if not isinstance(message, dict):
+                    continue
+                if (message.get("author") or {}).get("role") != "assistant":
+                    continue
+                parts = (message.get("content") or {}).get("parts") or []
+                text = "".join(str(part) for part in parts if isinstance(part, str)).strip()
+                if text:
+                    content = text
+    finally:
+        resp.close()
+    return content
+
+
+def research_payload_summary(payload: dict) -> dict:
+    figure_type = str(payload.get("figure_type") or "").strip()
+    style = str(payload.get("style") or "").strip()
+    return {
+        "subject": str(payload.get("subject") or "").strip(),
+        "context": str(payload.get("context") or "").strip(),
+        "figure_type": figure_type or "research workflow figure",
+        "style": style or "clean scientific illustration",
+        "skill": str(payload.get("skill") or "").strip(),
+        "current_prompt": str(payload.get("current_prompt") or payload.get("prompt") or "").strip(),
+        "current_mermaid": str(payload.get("current_mermaid") or payload.get("mermaid") or "").strip(),
+    }
+
+
+def build_research_fallback_prompt(payload: dict) -> str:
+    values = research_payload_summary(payload)
+    subject = values["subject"] or "根据科研材料提取研究主体"
+    context = values["context"][:1600] or "未提供科研材料，请仅根据用户填写的主题生成。"
+    return "\n".join([
+        "请生成一段可直接用于科研图生图的中文提示词。",
+        f"主体：{subject}。明确研究对象、输入条件、处理过程、关键变量和最终输出。",
+        f"构图：{values['figure_type']}。使用左到右或上到下的模块化流程布局，节点之间用箭头连接，体现步骤推进和因果关系。",
+        "结构：展示输入、处理模块、输出、对照组、分支、反馈、验证和局部放大信息，不编造科研结论。",
+        f"风格：{values['style']}。干净白底或浅色背景，信息层级清楚，矢量科研插图质感，配色克制，箭头精确。",
+        f"科研材料：{context}",
+        "负面控制：低清晰度、伪科学结构、不可读标签、随机多余模块、装饰性海报风、错误文字。",
+    ])
+
+
+def research_clean_label(value: str, fallback: str = "步骤") -> str:
+    label = re.sub(r"\s+", " ", str(value or fallback))
+    label = re.sub(r"[\"'`\[\]{}<>|]", "", label).strip()
+    return (label or fallback)[:34]
+
+
+def build_research_fallback_mermaid(payload: dict) -> str:
+    values = research_payload_summary(payload)
+    if not values["subject"] and not values["context"]:
+        return ""
+    raw_items = re.split(r"[\n\r.;；。,:，、>→\-]+", values["context"])
+    steps: list[str] = []
+    for item in raw_items:
+        label = research_clean_label(item)
+        if len(label) < 2:
+            continue
+        if not any(existing == label or existing in label or label in existing for existing in steps):
+            steps.append(label)
+    if len(steps) < 3:
+        steps = [
+            research_clean_label(values["subject"], "研究对象"),
+            "输入 / 样本准备",
+            "实验或模型处理",
+            "关键变量读出",
+            "验证与结论输出",
+        ]
+    steps = steps[:7]
+    direction = "TD" if values["figure_type"] in {"mechanism", "abstract"} else "LR"
+    ids = ["A", "B", "C", "D", "E", "F", "G"]
+    lines = [
+        f"flowchart {direction}",
+        f'  title["{research_clean_label(values["subject"] or "科研流程图", "科研流程图")}"]:::title',
+    ]
+    lines.extend(f'  {ids[index]}["{research_clean_label(step, f"步骤 {index + 1}")}"]:::step' for index, step in enumerate(steps))
+    lines.append("  title --> A")
+    lines.extend(f"  {ids[index]} --> {ids[index + 1]}" for index in range(len(steps) - 1))
+    if values["figure_type"] == "mechanism" and len(steps) >= 4:
+        lines.append(f"  {ids[min(len(steps) - 2, 4)]} -. 反馈 .-> {ids[1]}")
+    if values["figure_type"] == "abstract" and len(steps) >= 5:
+        lines.append(f'  {ids[-1]} --> output["论文图形摘要输出"]:::output')
+    lines.extend([
+        "  classDef title fill:#0b8f72,stroke:#00665f,color:#ffffff,stroke-width:1px;",
+        "  classDef step fill:#ffffff,stroke:#8ccbbb,color:#15201d,stroke-width:1px;",
+        "  classDef output fill:#e8f8f2,stroke:#0b8f72,color:#063f3b,stroke-width:1px;",
+    ])
+    return "\n".join(lines)
+
+
+def clean_research_mermaid(value: str) -> str:
+    text = str(value or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:mermaid)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*```$", "", text).strip()
+    if not text:
+        return ""
+    first = text.splitlines()[0].strip().lower()
+    allowed = ("flowchart", "graph", "sequencediagram", "statediagram", "journey", "timeline")
+    return text if first.startswith(allowed) else ""
+
+
+def normalize_research_plan(plan: dict, payload: dict) -> dict:
+    if not isinstance(plan, dict):
+        raise ValueError("research plan must be an object")
+    prompt = str(plan.get("prompt") or plan.get("image_prompt") or "").strip()
+    if not prompt:
+        prompt = build_research_fallback_prompt(payload)
+    mermaid = clean_research_mermaid(plan.get("mermaid") or plan.get("diagram") or "")
+    if not mermaid:
+        mermaid = build_research_fallback_mermaid(payload)
+    nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
+    notes = plan.get("notes") if isinstance(plan.get("notes"), list) else []
+    if not prompt and not mermaid:
+        raise ValueError("research plan missing prompt and mermaid")
+    return {
+        "title": str(plan.get("title") or research_payload_summary(payload)["subject"] or "").strip()[:120],
+        "prompt": prompt[:6000],
+        "mermaid": mermaid[:6000],
+        "caption": str(plan.get("caption") or "").strip()[:1200],
+        "negative": str(plan.get("negative") or "").strip()[:1200],
+        "nodes": [str(item or "").strip() for item in nodes if str(item or "").strip()][:10],
+        "notes": [str(item or "").strip() for item in notes if str(item or "").strip()][:10],
+    }
+
+
+def build_research_plan_messages(payload: dict) -> list[dict]:
+    values = research_payload_summary(payload)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是科研图工作台的中文科研绘图规划师和提示词工程师。"
+                "只输出严格 JSON object，不要输出 Markdown。"
+                "你必须把用户粘贴的论文摘要、实验步骤或课题材料，转换成中文科研生图提示词和有效 Mermaid 流程图。"
+                "除 Mermaid 关键字 flowchart/classDef 等语法外，所有标题、节点、图注、提示词、说明必须使用中文。"
+                "不要分析当前代码仓库，不要提到 Docker、Git、部署、文件、代码或本项目。"
+                "不要编造科研结论；标签要短，节点要可编辑。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps({
+                "output_schema": {
+                    "title": "中文标题",
+                    "prompt": "中文 S-C-S-S 科研图生图提示词",
+                    "mermaid": "有效 Mermaid 源码，以 flowchart LR 或 flowchart TD 开头，节点文字必须是中文",
+                    "caption": "中文图注",
+                    "negative": "中文负面提示词",
+                    "nodes": ["中文短节点标签"],
+                    "notes": ["中文绘图备注"],
+                },
+                "requirements": [
+                    "prompt 可以使用 主体 / 构图 / 结构 / 风格 四段，必须避免输出大段英文标题",
+                    "prompt 必须可直接用于科研图生图，不要写成解释文章",
+                    "Mermaid 必须是流程图，节点标签和箭头注释必须使用中文",
+                    "如果 current_mermaid 里已有英文节点，必须翻译为中文后再输出",
+                    "材料里有主流程、分支、反馈、验证、输出时，要在流程图里分开表达",
+                    "避免伪科学机制、不可读文字、随机装饰模块和海报式堆砌",
+                    "如果 current_prompt 或 current_mermaid 已存在，要在其基础上中文优化，不要忽略",
+                ],
+                "research": values,
+            }, ensure_ascii=False),
+        },
+    ]
+
+
+def call_research_text_model(api_url: str, api_key: str, model: str, payload: dict) -> dict:
+    api_base = normalize_api_base(api_url)
+    headers = {"Content-Type": "application/json"}
+    auth = bearer_token(api_key)
+    if auth:
+        headers["Authorization"] = auth
+    body = {
+        "model": model,
+        "messages": build_research_plan_messages(payload),
+        "temperature": 0.45,
+    }
+    endpoint = urljoin(api_base + "/", "v1/chat/completions")
+    resp = requests.post(endpoint, headers=headers, json=body, timeout=AGENT_TEXT_TIMEOUT)
+    if resp.status_code >= 400:
+        raise RuntimeError(redact_secrets(f"New API {resp.status_code}: {resp.text[:800].strip()}"))
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("文本模型没有返回 choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    return normalize_research_plan(extract_json_object(content), payload)
+
+
+def is_model_unavailable_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "model_not_found" in text
+        or "no available channel" in text
+        or "no channel" in text
+        or "model not found" in text
+    )
+
+
+def preferred_research_text_models(models: list[str], selected: str = "") -> list[str]:
+    cleaned = []
+    for model in models:
+        model = str(model or "").strip()
+        if model and model not in cleaned and is_text_model_id(model):
+            cleaned.append(model)
+    priority = ["gpt-4.1-mini", "gpt-4o-mini", "gpt-5-mini", "gpt-4.1", "gpt-4o", "gpt-5"]
+    selected = str(selected or "").strip()
+    ordered = []
+    if selected and selected in cleaned:
+        ordered.append(selected)
+    lower_map = {model.lower(): model for model in cleaned}
+    for item in priority:
+        model = lower_map.get(item)
+        if model and model not in ordered:
+            ordered.append(model)
+    for model in cleaned:
+        if model not in ordered:
+            ordered.append(model)
+    return ordered
+
+
+def call_research_text_model_with_fallback(api_url: str, api_key: str, model: str, payload: dict) -> tuple[dict, str]:
+    errors = []
+    try:
+        return call_research_text_model(api_url, api_key, model, payload), model
+    except Exception as exc:
+        if not is_model_unavailable_error(exc):
+            raise
+        errors.append(f"{model}: {exc}")
+    try:
+        model_list, _resolved_url, _route_kind = fetch_custom_models_by_kind("text", api_url, api_key)
+    except Exception as exc:
+        raise RuntimeError(redact_secrets("所选文本模型不可用，且刷新文本模型列表失败：" + str(exc)))
+    candidates = [item for item in preferred_research_text_models(model_list, model) if item != model]
+    for candidate in candidates:
+        try:
+            return call_research_text_model(api_url, api_key, candidate, payload), candidate
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc}")
+            if not is_model_unavailable_error(exc):
+                break
+    raise RuntimeError(redact_secrets("文本模型都不可用：" + " | ".join(errors[:6])))
+
+
+def call_research_text_model_with_key_pool(api_url: str, api_keys: list[str], model: str, payload: dict) -> tuple[dict, str]:
+    keys = [str(key or "").strip() for key in api_keys if str(key or "").strip()]
+    if not keys:
+        raise RuntimeError("文本模型 API Key 池为空")
+    errors = []
+    model_candidates: list[str] = [model]
+    model_list: list[str] = []
+    for key_index, key in enumerate(keys, 1):
+        for candidate in model_candidates:
+            try:
+                return call_research_text_model(api_url, key, candidate, payload), candidate
+            except Exception as exc:
+                errors.append(f"Key {key_index} {mask_secret(key)} / {candidate}: {exc}")
+                if key_index == 1 and candidate == model and is_model_unavailable_error(exc):
+                    try:
+                        model_list, _resolved_url, _route_kind = fetch_custom_models_by_kind("text", api_url, "")
+                        model_candidates = preferred_research_text_models(model_list, model) or [model]
+                    except Exception:
+                        model_candidates = [model]
+                continue
+    for candidate in [item for item in preferred_research_text_models(model_list, model) if item != model]:
+        for key_index, key in enumerate(keys, 1):
+            try:
+                return call_research_text_model(api_url, key, candidate, payload), candidate
+            except Exception as exc:
+                errors.append(f"Key {key_index} {mask_secret(key)} / {candidate}: {exc}")
+    raise RuntimeError(redact_secrets("文本模型 Key 池都不可用：" + " | ".join(errors[:8])))
+
+
+def call_research_text_model_with_pool(model: str, payload: dict) -> dict:
+    account = pick_pool_account()
+    token = account["access_token"]
+    try:
+        client = ChatGptImageClient(token)
+        client.bootstrap()
+        resp = client.start_text_generation(model, build_research_plan_messages(payload), client.chat_requirements())
+        content = collect_pool_text_response(resp)
+        if not content:
+            raise RuntimeError("号池文本模型没有返回内容")
+        plan = normalize_research_plan(extract_json_object(content), payload)
+        mark_pool_account_result(token, True)
+        return plan
+    except Exception as exc:
+        mark_pool_account_result(token, False, redact_secrets(str(exc)))
+        raise
+
+
+def is_image_channel_unavailable_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "image_generation tool not found" in text
+        or "tool choice" in text and "image_generation" in text
+        or "model_not_found" in text
+        or "no available channel" in text
+        or "no channel" in text
+        or "model not found" in text
+    )
+
+
+def preferred_research_image_models(models: list[str], selected: str = "") -> list[str]:
+    cleaned = []
+    for model in models:
+        model = str(model or "").strip()
+        if model and model not in cleaned and is_image_model_id(model):
+            cleaned.append(model)
+    priority = ["gpt-image-1.5", "gpt-image-1", "gpt-image-2", "imagen-4", "flux"]
+    selected = str(selected or "").strip()
+    ordered = []
+    if selected and selected in cleaned:
+        ordered.append(selected)
+    lower_map = {model.lower(): model for model in cleaned}
+    for item in priority:
+        model = lower_map.get(item)
+        if model and model not in ordered:
+            ordered.append(model)
+    for model in cleaned:
+        if model not in ordered:
+            ordered.append(model)
+    return ordered
+
+
 def generate_one(job: dict, prompt: str, index: int) -> list[dict]:
     if str(job.get("connection_mode") or "").strip() == "pool":
         return generate_one_with_pool(job, prompt, index)
@@ -2845,21 +3193,30 @@ def run_job(job_id: str) -> None:
     update_job(job_id, {"status": "running", "started_at": now_ts(), "error": ""})
     created_media = []
     try:
-        base_prompt = build_prompt(job)
-        if not base_prompt:
+        raw_prompt = str(job.get("prompt") or "").strip()
+        if not raw_prompt:
             raise RuntimeError("提示词为空")
         count = max(1, min(int(job.get("count") or 1), 20))
         variants = job.get("variants") or []
+        prompt_items = [str(item).strip() for item in job.get("prompt_variants") or [] if str(item).strip()]
+        if prompt_items:
+            count = len(prompt_items[:20])
+            update_job(job_id, {"count": count})
         estimate = estimate_cost(job.get("model", ""), count)
         update_job(job_id, {"cost": estimate})
         prompts: list[str] = []
-        if variants:
+        if prompt_items:
+            prompts = [build_prompt_with_base(job, prompt) for prompt in prompt_items[:count]]
+        elif variants:
+            base_prompt = build_prompt(job)
             for variant in variants[:count]:
                 prompts.append(f"{base_prompt}\n画面分镜：{variant}")
         else:
+            base_prompt = build_prompt(job)
             prompts = [base_prompt for _ in range(count)]
         retry_limit = max(0, min(int(job.get("retry_limit") or 0), 5))
         concurrency = max(1, min(int(job.get("concurrency") or 1), 6, len(prompts)))
+        model_candidates = [str(job.get("model") or DEFAULT_MODEL).strip()]
 
         def generate_prompt_index(item: tuple[int, str]) -> list[dict]:
             idx, prompt = item
@@ -2878,6 +3235,22 @@ def run_job(job_id: str) -> None:
                     return generate_one(job, prompt, idx)
                 except Exception as exc:
                     last_error = str(exc)
+                    if is_image_channel_unavailable_error(exc):
+                        try:
+                            model_list, _resolved_url, _route_kind = fetch_custom_models_by_kind("image", "", "")
+                            for candidate in preferred_research_image_models(model_list, job.get("model") or DEFAULT_MODEL):
+                                if candidate not in model_candidates:
+                                    model_candidates.append(candidate)
+                        except Exception:
+                            pass
+                        next_model = next((model for model in model_candidates if model != job.get("model")), "")
+                        if next_model:
+                            update_job(job_id, {
+                                "model": next_model,
+                                "error": f"{last_error}；已自动切换生图模型到 {next_model} 重试",
+                            })
+                            job["model"] = next_model
+                            continue
                     update_job(job_id, {"error": last_error})
                     if attempt >= retry_limit:
                         raise
@@ -3631,7 +4004,9 @@ def agent_mode_plan():
             try:
                 client = ChatGptImageClient(token)
                 resp = client.start_text_generation(model, build_agent_mode_messages(payload), {"reasoning_effort": "low"})
-                content = resp["choices"][0]["message"]["content"]
+                content = collect_pool_text_response(resp)
+                if not content:
+                    raise RuntimeError("号池文本模型没有返回内容")
                 plan = normalize_agent_mode_plan(extract_json_object(content), str(payload.get("prompt") or ""))
                 mark_pool_account_result(token, True)
             except Exception as exc:
@@ -3647,6 +4022,49 @@ def agent_mode_plan():
         return jsonify({"ok": True, "plan": plan, "model": model})
     except Exception as exc:
         return jsonify({"ok": False, "error": "Agent 模式 A 拆解失败", "detail": redact_secrets(str(exc))}), 200
+
+
+@app.post("/api/research-plan")
+def research_plan():
+    auth = login_required_json()
+    if auth:
+        return auth
+    payload = request.get_json(silent=True) or {}
+    subject = str(payload.get("subject") or "").strip()
+    context = str(payload.get("context") or "").strip()
+    if not subject and not context:
+        return jsonify({"error": "请先填写论文摘要、实验步骤或课题材料"}), 400
+    model = str(payload.get("text_model") or DEFAULT_TEXT_MODEL).strip()
+    connection_mode = str(payload.get("connection_mode") or "custom").strip()
+    text_custom_fallback = bool(payload.get("text_custom_fallback"))
+    api_url = str(payload.get("text_api_url") or payload.get("api_url") or "").strip()
+    api_key = str(payload.get("text_api_key") or payload.get("api_key") or "").strip()
+    if not model:
+        return jsonify({"error": "请先选择或填写科研工作台文本模型"}), 400
+    try:
+        if connection_mode == "pool" and not text_custom_fallback:
+            pool_user, pool_error = require_pool_user_json()
+            if pool_error:
+                return pool_error
+            if not pool_available_accounts():
+                return jsonify({"ok": False, "error": "本地号池没有可用账号", "detail": "请先到管理员后台导入并刷新可用号池账号"}), 200
+            plan = call_research_text_model_with_pool(model, payload)
+        else:
+            requested_api_key = api_key
+            api_url, api_key, used_debug_key, _route_kind = resolve_custom_api_credentials(api_url, api_key, "text")
+            if not api_url:
+                return jsonify({"error": "请先填写文本模型 API URL"}), 400
+            if not api_key:
+                return jsonify({"error": "请先填写文本模型 API Key"}), 400
+            if used_debug_key and not requested_api_key:
+                route_url, route_keys, _route_kind = custom_model_route_key_pool(read_model_config(), "text", include_legacy=True)
+                api_url = route_url or api_url
+                plan, model = call_research_text_model_with_key_pool(api_url, route_keys or [api_key], model, payload)
+            else:
+                plan, model = call_research_text_model_with_fallback(api_url, api_key, model, payload)
+        return jsonify({"ok": True, "plan": plan, "model": model})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "科研工作台文本模型生成失败", "detail": redact_secrets(str(exc))}), 200
 
 
 @app.post("/api/jobs")
@@ -3748,6 +4166,8 @@ def create_job():
         "retry_limit": max(0, min(int(payload.get("retry_limit") or 2), 5)),
         "seed": str(payload.get("seed") or "").strip(),
         "variants": [str(v).strip() for v in payload.get("variants", []) if str(v).strip()],
+        "prompt_variants": [str(v).strip() for v in payload.get("prompt_variants", []) if str(v).strip()][:20],
+        "research_project_signature": str(payload.get("research_project_signature") or "").strip()[:1000],
         "reference_ids": [str(v).strip() for v in payload.get("reference_ids", []) if str(v).strip()][:4],
         "edit_mode": bool(payload.get("edit_mode")),
         "status": "queued",

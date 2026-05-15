@@ -59,6 +59,7 @@ const els = {
   modelStatus: $("#modelStatus"),
   modelFetchHelp: $("#modelFetchHelp"),
   analysisModel: $("#analysisModel"),
+  researchTextModel: $("#researchTextModel"),
   manualTextModelPanel: $("#manualTextModelPanel"),
   manualTextModel: $("#manualTextModel"),
   reuseTextApiUrl: $("#reuseTextApiUrl"),
@@ -176,6 +177,10 @@ let submitInFlight = false;
 let activeSubmitRequestId = "";
 let preflightAnalysisInFlight = false;
 let preflightCancelled = false;
+let activeResearchJobId = "";
+let activeResearchProjectSignature = "";
+const RESEARCH_PROJECT_STORAGE_KEY = "yy-research-project";
+const RESEARCH_ACTIVE_JOB_STORAGE_KEY = "yy-research-active-job";
 
 function currentHistoryJob() {
   if (!selectedHistoryJobId || selectedHistoryJobId === NEW_TASK_DRAFT_ID) return null;
@@ -213,6 +218,48 @@ function ensureClientId() {
 }
 
 const clientId = ensureClientId();
+
+function compactSignatureText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 260);
+}
+
+function researchPromptSignature(value) {
+  return compactSignatureText(value).slice(0, 260);
+}
+
+function researchProjectSignature(promptOverride = "") {
+  const prompt = promptOverride || [...document.querySelectorAll("#researchStage .research-node textarea")]
+    .map((item) => item.value || "")
+    .filter(Boolean)
+    .join("\n");
+  return [
+    compactSignatureText($("#researchSubject")?.value || ""),
+    compactSignatureText($("#researchProjectContext")?.value || ""),
+    compactSignatureText(prompt || $("#researchPrompt")?.value || ""),
+  ].filter(Boolean).join(" || ").slice(0, 900);
+}
+
+function saveActiveResearchJob(jobId = activeResearchJobId, signature = activeResearchProjectSignature) {
+  if (!jobId) {
+    localStorage.removeItem(RESEARCH_ACTIVE_JOB_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(RESEARCH_ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+    jobId,
+    signature: signature || "",
+  }));
+}
+
+function restoreActiveResearchJob() {
+  if (activeResearchJobId) return;
+  try {
+    const payload = JSON.parse(localStorage.getItem(RESEARCH_ACTIVE_JOB_STORAGE_KEY) || "{}");
+    if (payload.jobId) activeResearchJobId = String(payload.jobId);
+    if (payload.signature) activeResearchProjectSignature = String(payload.signature);
+  } catch {
+    localStorage.removeItem(RESEARCH_ACTIVE_JOB_STORAGE_KEY);
+  }
+}
 
 async function api(path, options = {}) {
   const resp = await fetch(path, {
@@ -1422,6 +1469,10 @@ function isImageModel(model) {
   ].some((token) => value.includes(token));
 }
 
+function cleanTextModelList(models = []) {
+  return cleanModelList(models).filter(isTextModel);
+}
+
 function isTextModel(model) {
   const value = String(model || "").toLowerCase();
   if (!value || isImageModel(value)) return false;
@@ -1486,6 +1537,7 @@ function replaceModelOptions(models) {
     els.model.append(option);
     els.model.disabled = true;
     els.submitJob.disabled = true;
+    syncResearchImageModelOptions([]);
     syncSummary();
     return;
   }
@@ -1504,7 +1556,35 @@ function replaceModelOptions(models) {
     els.model.value = models[0];
   }
   if (els.model.value) localStorage.setItem(SELECTED_IMAGE_MODEL_KEY, els.model.value);
+  syncResearchImageModelOptions(models);
   syncSummary();
+}
+
+function syncResearchImageModelOptions(models = verifiedImageModels) {
+  const selects = document.querySelectorAll(".research-image-model-select");
+  if (!selects.length) return;
+  models = cleanModelList(models).filter(isImageModel);
+  const selected = els.model?.value || localStorage.getItem(SELECTED_IMAGE_MODEL_KEY) || "";
+  selects.forEach((select) => {
+    const current = select.value || selected;
+    select.innerHTML = "";
+    if (!models.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "未检测到生图模型";
+      select.append(option);
+      select.disabled = true;
+      return;
+    }
+    for (const model of models) {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      select.append(option);
+    }
+    select.disabled = false;
+    select.value = models.includes(current) ? current : (models.includes(selected) ? selected : models[0]);
+  });
 }
 
 function syncTextModelFields() {
@@ -1534,7 +1614,7 @@ function syncTextModelFields() {
 }
 
 function replaceTextModelOptions(models = []) {
-  models = cleanModelList(models);
+  models = cleanTextModelList(models);
   if (!els.analysisModel) return;
   const saved = localStorage.getItem(SELECTED_TEXT_MODEL_KEY) || "";
   const current = els.analysisModel.value || saved;
@@ -1561,7 +1641,33 @@ function replaceTextModelOptions(models = []) {
       els.manualTextModel.value = localStorage.getItem(MANUAL_TEXT_MODEL_KEY) || "";
     }
   }
+  syncResearchTextModelOptions(models);
   syncTextModelFields();
+}
+
+function syncResearchTextModelOptions(models = verifiedTextModels) {
+  const select = els.researchTextModel;
+  if (!select) return;
+  models = cleanTextModelList(models);
+  const current = select.value || selectedTextModel();
+  select.innerHTML = "";
+  if (models.length) {
+    for (const model of models) {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      select.append(option);
+    }
+    select.disabled = false;
+    select.value = models.includes(current) ? current : selectedTextModel();
+    return;
+  }
+  const manual = (els.manualTextModel?.value || "").trim();
+  const option = document.createElement("option");
+  option.value = manual;
+  option.textContent = manual || "未检测到文本模型";
+  select.append(option);
+  select.disabled = !manual;
 }
 
 function selectedTextModel() {
@@ -2957,6 +3063,7 @@ function renderState() {
   renderAvailableModels();
   renderPresetPanel();
   renderPoolUser();
+  syncResearchOutputsFromState();
   syncSummary();
 }
 
@@ -3173,6 +3280,7 @@ async function showPreflightGenerate() {
       els.submitJob.textContent = "➤";
     }
   }
+  if (preflightCancelled) return;
   startPreflightCountdown();
 }
 
@@ -3211,7 +3319,7 @@ async function refreshModels({ silent = false } = {}) {
     }
     const profileModels = modelProfiles.map((item) => item.id).filter(Boolean);
     const imageModels = (Array.isArray(state.models) ? state.models : profileModels).filter(isImageModel);
-    const textModels = profileModels.filter(isTextModel);
+    const textModels = cleanTextModelList(profileModels);
     verifiedImageModels = imageModels.length ? imageModels : ["gpt-image-2"];
     verifiedTextModels = textModels;
     replaceModelOptions(verifiedImageModels);
@@ -3266,7 +3374,7 @@ async function refreshModels({ silent = false } = {}) {
     if (requestId !== modelRequestId) return;
     const allModels = Array.isArray(data.models) ? data.models : [];
     const imageModels = Array.isArray(data.image_models) ? data.image_models : allModels.filter(isImageModel);
-    const textModels = Array.isArray(data.text_models) ? data.text_models : allModels.filter(isTextModel);
+    const textModels = cleanTextModelList(Array.isArray(data.text_models) ? data.text_models : allModels);
     verifiedImageModels = imageModels;
     verifiedTextModels = textModels;
     replaceModelOptions(imageModels);
@@ -3831,8 +3939,8 @@ const researchSkills = [
   {
     id: "scss-prompt",
     name: "S-C-S-S 架构",
-    desc: "按 Subject / Composition / Structure / Style 输出绘图 Prompt。",
-    instruction: "严格按 S-C-S-S 组织绘图 Prompt：Subject 写主体，Composition 写构图，Structure 写模块细节和箭头关系，Style 写配色、边框、图标和整体质感。"
+    desc: "按主体 / 构图 / 结构 / 风格输出绘图提示词。",
+    instruction: "严格按主体、构图、结构、风格组织绘图提示词：主体写研究对象，构图写画面布局，结构写模块细节和箭头关系，风格写配色、边框、图标和整体质感。"
   },
   {
     id: "flow-draft",
@@ -3871,10 +3979,10 @@ function buildResearchPrompt() {
     `当前技能：${skill.name}。${skill.instruction}`,
     `项目内容：${extracted}`,
     "",
-    `S - Subject（主体）：${subject || "根据项目内容提取主体"}。明确流程图要表达的核心研究对象、输入条件、处理过程、关键变量和最终输出。`,
-    `C - Composition（构图）：生成一张${figureType}，采用左到右或上到下的线性/分层流程布局；每一步是一个模块，模块之间用箭头连接，箭头方向必须表达步骤推进、因果关系或数据/物料流。`,
-    "S - Structure（结构细节）：拆出每个流程节点的输入、处理、输出、变量、读出指标和可局部放大的关键部位；需要标明主流程、支路、反馈或对照组，不添加无关模块。",
-    `S - Style（风格渲染）：${style}，白色或浅色背景，构图干净，信息层级清楚，适合论文图、基金汇报或科研流程图初稿。`,
+    `主体：${subject || "根据项目内容提取主体"}。明确流程图要表达的核心研究对象、输入条件、处理过程、关键变量和最终输出。`,
+    `构图：生成一张${figureType}，采用左到右或上到下的线性/分层流程布局；每一步是一个模块，模块之间用箭头连接，箭头方向必须表达步骤推进、因果关系或数据/物料流。`,
+    "结构细节：拆出每个流程节点的输入、处理、输出、变量、读出指标和可局部放大的关键部位；需要标明主流程、支路、反馈或对照组，不添加无关模块。",
+    `风格渲染：${style}，白色或浅色背景，构图干净，信息层级清楚，适合论文图、基金汇报或科研流程图初稿。`,
     "图像编辑要求：如果使用参考图，线稿图用于约束结构、轮廓、局部边界；色稿图用于约束材质、配色和光影。局部高清重生成时只增强选区，不改变整体科学含义。",
     "负面控制：避免低清晰度、错别字、伪科学结构、不可读标签、随机多余零件、装饰性海报风。"
   ];
@@ -4077,7 +4185,7 @@ function buildResearchMermaidDiagram() {
     lines.push(`  ${ids[Math.min(steps.length - 2, 4)]} -.机制反馈.-> ${ids[1]}`);
   }
   if (figureType === "abstract" && steps.length >= 5) {
-    lines.push(`  ${ids[steps.length - 1]} --> output["论文图形摘要 / Graphical abstract"]:::output`);
+    lines.push(`  ${ids[steps.length - 1]} --> output["论文图形摘要输出"]:::output`);
   }
   lines.push(
     "  classDef title fill:#0b8f72,stroke:#00665f,color:#ffffff,stroke-width:1px;",
@@ -4085,6 +4193,104 @@ function buildResearchMermaidDiagram() {
     "  classDef output fill:#e8f8f2,stroke:#0b8f72,color:#063f3b,stroke-width:1px;"
   );
   return lines.join("\n");
+}
+
+async function requestResearchAiPlan() {
+  const subject = ($("#researchSubject")?.value || "").trim();
+  const context = ($("#researchProjectContext")?.value || "").trim();
+  if (!subject && !context) {
+    throw new Error("请先填写论文摘要、实验步骤或课题材料");
+  }
+  const textModel = selectedTextModel();
+  if (!textModel) {
+    throw new Error("未配置文本模型，请先在商业图工作台或管理员设置里读取文本模型");
+  }
+  const figureType = $("#researchFigureType");
+  const style = $("#researchStyle");
+  const skill = researchSkills.find((item) => item.id === selectedResearchSkillId);
+  const data = await api("/api/research-plan", {
+    method: "POST",
+    body: JSON.stringify({
+      connection_mode: els.connectionMode.value,
+      api_url: selectedApiUrl(),
+      api_key: selectedApiKey(),
+      text_model: textModel,
+      text_api_url: selectedTextApiUrl(),
+      text_api_key: selectedTextApiKey(),
+      text_custom_fallback: Boolean(els.connectionMode.value === "pool" && !verifiedTextModels.length),
+      subject,
+      context,
+      figure_type: figureType?.value || "",
+      figure_type_label: figureType?.selectedOptions?.[0]?.textContent || "",
+      style: style?.selectedOptions?.[0]?.textContent || style?.value || "",
+      skill: skill ? `${skill.name}: ${skill.instruction}` : "",
+      current_prompt: ($("#researchPrompt")?.value || "").trim(),
+      current_mermaid: ($("#researchDiagramSource")?.value || "").trim(),
+    }),
+  });
+  if (data && data.ok === false) {
+    throw new Error(data.detail || data.error || "科研工作台文本模型生成失败");
+  }
+  return { ...(data.plan || {}), textModel: data.model || textModel };
+}
+
+function applyResearchAiPlan(plan, { prompt = true, diagram = true } = {}) {
+  if (!plan || typeof plan !== "object") return;
+  const promptBox = $("#researchPrompt");
+  const diagramSource = $("#researchDiagramSource");
+  if (prompt && promptBox && String(plan.prompt || "").trim()) {
+    promptBox.value = String(plan.prompt || "").trim();
+  }
+  if (diagram && diagramSource && String(plan.mermaid || "").trim()) {
+    diagramSource.value = String(plan.mermaid || "").trim();
+    renderResearchDiagram();
+  }
+  const caption = document.querySelector(".research-tools .research-empty-box:not(textarea)");
+  if (caption && (plan.caption || plan.notes?.length)) {
+    caption.textContent = [plan.caption, ...(Array.isArray(plan.notes) ? plan.notes : [])].filter(Boolean).join(" / ");
+  }
+  renderResearchScssCards();
+}
+
+async function generateResearchPromptWithAi(button) {
+  const previousText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "AI 生成中...";
+  }
+  try {
+    const plan = await requestResearchAiPlan();
+    applyResearchAiPlan(plan, { prompt: true, diagram: false });
+    setResearchStatus(`已使用 ${plan.textModel || selectedTextModelLabel()} 生成科研绘图提示词`);
+  } catch (err) {
+    renderResearchScssCards();
+    setResearchStatus(err.message || "请先填写论文摘要、实验步骤或课题材料");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
+}
+
+async function generateResearchDiagramWithAi(button) {
+  const previousText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "AI 生成中...";
+  }
+  try {
+    const plan = await requestResearchAiPlan();
+    applyResearchAiPlan(plan, { prompt: false, diagram: true });
+    setResearchStatus(`已使用 ${plan.textModel || selectedTextModelLabel()} 生成 Mermaid 流程图`);
+  } catch (err) {
+    setResearchStatus(err.message || "请先填写论文摘要、实验步骤或课题材料");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
 }
 
 async function loadResearchMermaid() {
@@ -4236,10 +4442,283 @@ async function uploadResearchControlReferences() {
   return refs.filter(Boolean);
 }
 
+function selectedResearchImageModel(sourceNode = null) {
+  const nodeModel = sourceNode?.querySelector(".research-image-model-select")?.value || "";
+  return (nodeModel || els.model?.value || "").trim();
+}
+
+function researchNodeControlValue(sourceNode, labelText) {
+  const labels = [...(sourceNode?.querySelectorAll(".research-node-grid label") || [])];
+  const label = labels.find((item) => (item.firstChild?.textContent || item.textContent || "").trim().startsWith(labelText));
+  const field = label?.querySelector("select, input");
+  return (field?.value || "").trim();
+}
+
+function normalizeResearchQuality(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const map = { medium: "medium", high: "high", auto: "auto", standard: "standard", hd: "hd", "标准": "standard", "高": "high", "中": "medium" };
+  return map[text] || els.quality?.value || "auto";
+}
+
+function normalizeResearchFormat(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return ["png", "webp", "jpeg", "jpg"].includes(text) ? (text === "jpg" ? "jpeg" : text) : (els.outputFormat?.value || "png");
+}
+
+function researchTextToImageNodes() {
+  return [...document.querySelectorAll("#researchStage .research-node")]
+    .filter((node) => node.querySelector("[data-research-generate-node], .research-node-grid"));
+}
+
+function researchPromptForNode(node) {
+  return (node?.querySelector("textarea")?.value || "").trim();
+}
+
+function researchOutputNodesForSource(sourceNode = null) {
+  if (!sourceNode?.dataset?.nodeId) return [];
+  const targetIds = researchCanvasState.links
+    .filter((link) => link.from === sourceNode.dataset.nodeId)
+    .map((link) => link.to);
+  return targetIds
+    .map(researchNodeById)
+    .filter((node) => node?.classList.contains("research-node-output"));
+}
+
+function ensureResearchOutputNodesForSource(sourceNode = null, count = 1) {
+  if (!sourceNode) return ensureResearchOutputNodes(count);
+  let nodes = researchOutputNodesForSource(sourceNode);
+  while (nodes.length < count) {
+    const index = document.querySelectorAll(".research-node-output").length;
+    const outputNode = createResearchNode("output", {
+      x: Number(sourceNode.dataset.x || 120) + Number(sourceNode.dataset.w || sourceNode.offsetWidth || 340) + 190,
+      y: Number(sourceNode.dataset.y || 120) + nodes.length * 360,
+      w: 390,
+    });
+    if (outputNode) {
+      addResearchLink(sourceNode.dataset.nodeId, outputNode.dataset.nodeId);
+      const title = outputNode.querySelector(".research-node-head strong");
+      if (title) title.textContent = `科研图 ${index + 1}`;
+    }
+    nodes = researchOutputNodesForSource(sourceNode);
+  }
+  return nodes.slice(0, count).map((node) => node.querySelector(".research-generated-preview")).filter(Boolean);
+}
+
+function researchGenerationSettings(sourceNode = null, promptCount = 1) {
+  const numbers = normalizeGenerationNumbers();
+  const aspectRatio = researchNodeControlValue(sourceNode, "比例") || els.aspectRatio.value;
+  const resolution = researchNodeControlValue(sourceNode, "分辨率") || els.resolution.value;
+  const model = selectedResearchImageModel(sourceNode);
+  return {
+    model,
+    aspectRatio,
+    resolution,
+    size: requestSizeFor(aspectRatio, resolution),
+    quality: normalizeResearchQuality(researchNodeControlValue(sourceNode, "质量")),
+    outputFormat: normalizeResearchFormat(researchNodeControlValue(sourceNode, "格式")),
+    count: Math.max(1, Math.min(20, promptCount || 1)),
+    concurrency: numbers.concurrency,
+    retryLimit: numbers.retryLimit,
+  };
+}
+
+function ensureResearchOutputNodes(count = 1) {
+  let outputs = [...document.querySelectorAll(".research-node-output .research-generated-preview")];
+  while (outputs.length < count) {
+    createResearchNode("output", { x: 650, y: 90 + outputs.length * 390, w: 390 });
+    outputs = [...document.querySelectorAll(".research-node-output .research-generated-preview")];
+  }
+  return outputs;
+}
+
+function resetResearchOutputNode(node, text = "等待生成当前科研图。") {
+  if (!node) return;
+  delete node.dataset.researchJobId;
+  delete node.dataset.researchProjectSignature;
+  delete node.dataset.researchPromptSignature;
+  const preview = node.querySelector(".research-generated-preview");
+  if (preview) {
+    preview.classList.remove("generated", "loading", "failed");
+    preview.innerHTML = "";
+  }
+  const desc = node.querySelector("p");
+  if (desc) desc.textContent = text;
+}
+
+function clearMismatchedResearchOutputs(currentSignature = researchProjectSignature()) {
+  document.querySelectorAll(".research-node-output").forEach((node) => {
+    const nodeSignature = node.dataset.researchProjectSignature || "";
+    const hasRenderedImage = Boolean(node.querySelector(".research-generated-preview img"));
+    if (!nodeSignature && hasRenderedImage) {
+      resetResearchOutputNode(node, "已清空未绑定当前科研任务的旧输出。");
+      return;
+    }
+    if (nodeSignature && currentSignature && nodeSignature !== currentSignature) {
+      resetResearchOutputNode(node, "已清空非当前科研项目的输出。");
+    }
+  });
+}
+
+function setResearchOutputPending(job = {}, sourceNode = null) {
+  const count = Math.max(1, Number(job.count || 1));
+  const outputs = sourceNode
+    ? ensureResearchOutputNodesForSource(sourceNode, 1)
+    : ensureResearchOutputNodes(count);
+  outputs.slice(0, count).forEach((preview, index) => {
+    preview.classList.add("generated", "loading");
+    preview.classList.remove("failed");
+    preview.innerHTML = `<strong>生成中 ${index + 1}/${count}</strong><span>${escapeHtml(job.progress?.message || "已进入商业生图队列，等待返回图片")}</span>`;
+    const node = preview.closest(".research-node");
+    if (node) {
+      node.dataset.researchJobId = job.id || node.dataset.researchJobId || "";
+      node.dataset.researchProjectSignature = job.research_project_signature || activeResearchProjectSignature || researchProjectSignature();
+      node.dataset.researchPromptSignature = sourceNode ? researchPromptSignature(researchPromptForNode(sourceNode)) : "";
+    }
+    const title = node?.querySelector(".research-node-head strong");
+    const desc = node?.querySelector("p");
+    if (title) title.textContent = `科研图 ${index + 1}`;
+    if (desc) desc.textContent = `状态: ${statusText(job.status || "queued")} · ${job.size || ""} · ${job.quality || ""}`;
+  });
+  focusResearchNode(outputs[0]?.closest(".research-node"));
+}
+
+function mediaForResearchJob(jobId) {
+  const job = state.jobs.find((item) => item.id === jobId) || {};
+  const ids = new Set((job.media_ids || []).map(String));
+  return state.media
+    .filter((media) => media.job_id === jobId || ids.has(String(media.id)))
+    .sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
+}
+
+function renderResearchJobMedia(jobId, sourceNode = null) {
+  const job = state.jobs.find((item) => item.id === jobId) || {};
+  const mediaItems = mediaForResearchJob(jobId);
+  if (!mediaItems.length) return mediaItems;
+  const count = Math.max(1, Number(job.count || mediaItems.length || 1));
+  const outputs = sourceNode
+    ? ensureResearchOutputNodesForSource(sourceNode, 1)
+    : ensureResearchOutputNodes(Math.max(count, mediaItems.length));
+  mediaItems.forEach((media, index) => {
+    const preview = outputs[index];
+    if (!preview) return;
+    const filename = `research-${job.id || "image"}-${index + 1}.${(media.output_format || job.output_format || "png").toLowerCase().replace("jpeg", "jpg")}`;
+    preview.classList.add("generated");
+    preview.classList.remove("loading", "failed");
+    preview.innerHTML = `<img src="${escapeAttr(media.url)}" alt="${escapeAttr(media.prompt || job.prompt || "科研图")}" loading="lazy">`;
+    const download = document.createElement("a");
+    download.className = "research-download-button";
+    download.href = media.url;
+    download.download = filename;
+    download.target = "_blank";
+    download.rel = "noopener";
+    download.textContent = "下载";
+    preview.append(download);
+    const node = preview.closest(".research-node");
+    if (node) {
+      node.dataset.researchJobId = job.id || "";
+      node.dataset.researchProjectSignature = job.research_project_signature || activeResearchProjectSignature || researchProjectSignature();
+      node.dataset.researchPromptSignature = sourceNode ? researchPromptSignature(researchPromptForNode(sourceNode)) : researchPromptSignature(job.prompt || "");
+    }
+    const title = node?.querySelector(".research-node-head strong");
+    const desc = node?.querySelector("p");
+    if (title) title.textContent = `科研图 ${index + 1}`;
+    if (desc) desc.textContent = `已生成: ${media.actual_size || media.size || job.size || ""} · ${media.output_format || job.output_format || "png"}`;
+  });
+  focusResearchNode(outputs[0]?.closest(".research-node"));
+  return mediaItems;
+}
+
+function lastResearchJobWithMedia() {
+  const currentSignature = researchProjectSignature();
+  if (!currentSignature) return null;
+  const jobs = state.jobs.filter((job) => {
+    const agentId = String(job.agent_id || "");
+    const agentName = String(job.agent_name || "");
+    if (!(agentId === "research-workbench" || agentName.includes("科研图"))) return false;
+    return Boolean(job.research_project_signature && job.research_project_signature === currentSignature);
+  });
+  return jobs.find((job) => mediaForResearchJob(job.id).length) || null;
+}
+
+function sourceNodeForResearchJob(job = {}) {
+  const jobPrompt = researchPromptSignature(job.prompt || "");
+  if (!jobPrompt) return null;
+  return researchTextToImageNodes().find((node) => researchPromptSignature(researchPromptForNode(node)) === jobPrompt) || null;
+}
+
+function syncResearchOutputsFromState() {
+  if (!document.body.classList.contains("research-active") && !$("#research")) return;
+  restoreActiveResearchJob();
+  clearMismatchedResearchOutputs();
+  const currentSignature = researchProjectSignature();
+  if (!currentSignature) return;
+  const jobId = activeResearchJobId || (selectedHistoryJobId !== NEW_TASK_DRAFT_ID ? selectedHistoryJobId : "");
+  const directJob = jobId ? state.jobs.find((job) => job.id === jobId) : null;
+  const directSourceNode = directJob ? sourceNodeForResearchJob(directJob) : null;
+  const directMatches = directJob && (
+    (directJob.research_project_signature && directJob.research_project_signature === currentSignature)
+    || (!directJob.research_project_signature && Boolean(directSourceNode))
+  );
+  const job = directMatches && mediaForResearchJob(directJob.id).length ? directJob : lastResearchJobWithMedia();
+  if (!job) return;
+  const sourceNode = job.id === directJob?.id ? directSourceNode : sourceNodeForResearchJob(job);
+  if (!sourceNode && !job.research_project_signature) return;
+  const mediaItems = renderResearchJobMedia(job.id, sourceNode);
+  if (mediaItems.length) {
+    activeResearchJobId = job.id;
+    activeResearchProjectSignature = job.research_project_signature || activeResearchProjectSignature || currentSignature;
+    saveActiveResearchJob();
+    setResearchStatus(`已从图片记录回填 ${mediaItems.length} 张到科研图输出节点`);
+  }
+}
+
+function renderResearchJobError(job = {}) {
+  const outputs = ensureResearchOutputNodes(Math.max(1, Number(job.count || 1)));
+  const message = job.error || "科研图生成失败，请检查生图模型、Key 或提示词";
+  outputs[0].classList.add("generated", "failed");
+  outputs[0].classList.remove("loading");
+  outputs[0].innerHTML = `<strong>生成失败</strong><span>${escapeHtml(message)}</span>`;
+  const desc = outputs[0].closest(".research-node")?.querySelector("p");
+  if (desc) desc.textContent = `失败原因: ${message}`;
+  focusResearchNode(outputs[0]?.closest(".research-node"));
+  setResearchStatus(message);
+}
+
+async function watchResearchGeneration(jobId, sourceNode = null) {
+  if (!jobId || researchGenerationWatchers.has(jobId)) return;
+  researchGenerationWatchers.add(jobId);
+  try {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await loadState();
+      const job = state.jobs.find((item) => item.id === jobId) || {};
+      const mediaItems = renderResearchJobMedia(jobId, sourceNode);
+      if (mediaItems.length && (job.status === "success" || mediaItems.length >= Number(job.count || 1))) {
+        setResearchStatus(`科研图已生成 ${mediaItems.length} 张，已回填到画布输出节点`);
+        return;
+      }
+      if (job.status === "error") {
+        renderResearchJobError(job);
+        return;
+      }
+      setResearchOutputPending(job, sourceNode);
+      setResearchStatus(job.progress?.message || "科研图生成中，正在等待商业生图队列返回图片");
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    setResearchStatus("科研图任务仍在生成，可稍后在商业生图记录或画布输出节点查看");
+  } finally {
+    researchGenerationWatchers.delete(jobId);
+  }
+}
+
 async function submitResearchGenerationJob(sourceNode = null) {
   if (submitInFlight) return null;
-  const nodePrompt = (sourceNode?.querySelector("textarea")?.value || "").trim();
-  const prompt = nodePrompt || buildResearchGenerationPrompt();
+  const isBatch = !sourceNode;
+  const promptNodes = isBatch ? researchTextToImageNodes().filter((node) => researchPromptForNode(node)) : [];
+  const promptVariants = promptNodes.map(researchPromptForNode);
+  const nodePrompt = researchPromptForNode(sourceNode);
+  const prompt = isBatch && promptVariants.length
+    ? promptVariants[0]
+    : (nodePrompt || buildResearchGenerationPrompt());
   if (!prompt) {
     setResearchStatus("请先填写绘图目标或论文摘要，再生成科研图");
     $("#researchSubject")?.focus();
@@ -4252,7 +4731,9 @@ async function submitResearchGenerationJob(sourceNode = null) {
     return null;
   }
   saveApiKeyPreference();
-  const numbers = normalizeGenerationNumbers();
+  const settingsNode = sourceNode || promptNodes[0] || null;
+  const settings = researchGenerationSettings(settingsNode, isBatch && promptVariants.length ? promptVariants.length : 1);
+  const projectSignature = researchProjectSignature(isBatch && promptVariants.length ? promptVariants.join("\n") : prompt);
   const button = $("#researchGenerateAll");
   const previousText = button?.textContent || "";
   submitInFlight = true;
@@ -4270,7 +4751,7 @@ async function submitResearchGenerationJob(sourceNode = null) {
         client_request_id: `research-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         title,
         prompt,
-        model: els.model.value,
+        model: settings.model,
         protocol: els.protocol.value,
         connection_mode: els.connectionMode.value,
         api_url: selectedApiUrl(),
@@ -4279,30 +4760,37 @@ async function submitResearchGenerationJob(sourceNode = null) {
         agent_name: "科研图工作台",
         agent_variant: $("#researchFigureType")?.value || "",
         agent_enabled: true,
-        aspect_ratio: els.aspectRatio.value,
-        resolution: els.resolution.value,
-        size: requestSize(),
-        quality: els.quality.value,
-        output_format: els.outputFormat.value,
-        count: numbers.count,
-        concurrency: numbers.concurrency,
-        retry_limit: numbers.retryLimit,
+        aspect_ratio: settings.aspectRatio,
+        resolution: settings.resolution,
+        size: settings.size,
+        quality: settings.quality,
+        output_format: settings.outputFormat,
+        count: settings.count,
+        concurrency: settings.concurrency,
+        retry_limit: settings.retryLimit,
         seed: els.seed.value.trim(),
         negative: els.negative.value.trim(),
         variants: buildVariants(),
+        prompt_variants: isBatch ? promptVariants : [],
+        research_project_signature: projectSignature,
         reference_ids: Array.from(selectedReferenceIds),
         edit_mode: Boolean(selectedReferenceIds.size),
       }),
     });
     selectedHistoryJobId = created?.job?.id || null;
+    activeResearchJobId = created?.job?.id || "";
+    activeResearchProjectSignature = projectSignature;
+    const appliedJob = created?.job || { id: activeResearchJobId, count: settings.count, status: "queued", research_project_signature: projectSignature };
+    appliedJob.research_project_signature = appliedJob.research_project_signature || projectSignature;
+    saveActiveResearchJob();
     selectedGalleryIds.clear();
     await loadState();
     renderState();
-    generateResearchOutputs(sourceNode, {
-      force: true,
-      status: `科研图任务已提交到商业生图队列：${created?.job?.title || title}`,
-    });
-    setResearchStatus(`科研图任务已提交到商业生图队列：${created?.job?.title || title}`);
+    setResearchOutputPending(appliedJob, sourceNode);
+    setResearchStatus(isBatch && promptVariants.length
+      ? `已按 ${promptVariants.length} 个文生图节点提交到商业生图队列`
+      : `科研图任务已提交到商业生图队列：${created?.job?.title || title}`);
+    watchResearchGeneration(created?.job?.id, sourceNode);
     return created?.job || null;
   } catch (err) {
     setResearchStatus(err.message || "科研图任务提交失败");
@@ -4381,7 +4869,13 @@ const researchCanvasState = {
   startNodeX: 0,
   startNodeY: 0,
   startNodeW: 0,
+  links: [
+    { from: "prompt", to: "output-a" },
+  ],
+  linkDraft: null,
+  pendingLinkFrom: "",
 };
+const researchGenerationWatchers = new Set();
 
 function researchClamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -4404,6 +4898,66 @@ function setResearchNodeGeometry(node, geometry = {}) {
   node.dataset.w = String(Math.round(w));
   node.style.width = `${Math.round(w)}px`;
   node.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  renderResearchLinks();
+}
+
+function researchNodeById(id) {
+  if (!id) return null;
+  return [...document.querySelectorAll("#researchStage .research-node")]
+    .find((node) => node.dataset.nodeId === id) || null;
+}
+
+function researchPortPoint(node, side) {
+  if (!node) return null;
+  const x = Number(node.dataset.x || 0);
+  const y = Number(node.dataset.y || 0);
+  const w = Number(node.dataset.w || node.offsetWidth || 320);
+  const h = node.offsetHeight || 180;
+  return side === "out"
+    ? { x: x + w + 10, y: y + h / 2 }
+    : { x: x - 10, y: y + h / 2 };
+}
+
+function researchLinkPath(fromPoint, toPoint) {
+  const gap = Math.max(80, Math.abs(toPoint.x - fromPoint.x) * 0.45);
+  return `M${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + gap} ${fromPoint.y}, ${toPoint.x - gap} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
+}
+
+function renderResearchLinks() {
+  const svg = $("#researchLinks");
+  if (!svg) return;
+  const paths = [];
+  researchCanvasState.links = researchCanvasState.links.filter((link) => researchNodeById(link.from) && researchNodeById(link.to) && link.from !== link.to);
+  researchCanvasState.links.forEach((link) => {
+    const fromPoint = researchPortPoint(researchNodeById(link.from), "out");
+    const toPoint = researchPortPoint(researchNodeById(link.to), "in");
+    if (!fromPoint || !toPoint) return;
+    paths.push(`<path class="research-link-path" data-from="${escapeAttr(link.from)}" data-to="${escapeAttr(link.to)}" d="${researchLinkPath(fromPoint, toPoint)}" />`);
+  });
+  if (researchCanvasState.linkDraft?.fromPoint && researchCanvasState.linkDraft?.toPoint) {
+    paths.push(`<path class="research-link-path draft" d="${researchLinkPath(researchCanvasState.linkDraft.fromPoint, researchCanvasState.linkDraft.toPoint)}" />`);
+  }
+  svg.innerHTML = paths.join("");
+}
+
+function addResearchLink(fromId, toId) {
+  if (!fromId || !toId || fromId === toId) {
+    setResearchStatus("不能连接到同一个节点");
+    return false;
+  }
+  if (!researchNodeById(fromId) || !researchNodeById(toId)) return false;
+  const exists = researchCanvasState.links.some((link) => link.from === fromId && link.to === toId);
+  if (!exists) researchCanvasState.links.push({ from: fromId, to: toId });
+  renderResearchLinks();
+  setResearchStatus("已建立节点连线");
+  researchCanvasState.pendingLinkFrom = "";
+  document.querySelectorAll(".research-node.pending-link").forEach((node) => node.classList.remove("pending-link"));
+  return true;
+}
+
+function clearResearchLinksForNode(nodeId) {
+  researchCanvasState.links = researchCanvasState.links.filter((link) => link.from !== nodeId && link.to !== nodeId);
+  renderResearchLinks();
 }
 
 function updateResearchStage() {
@@ -4412,6 +4966,7 @@ function updateResearchStage() {
   if (!stage) return;
   stage.style.transform = `translate(${Math.round(researchCanvasState.panX)}px, ${Math.round(researchCanvasState.panY)}px) scale(${researchCanvasState.scale})`;
   if (label) label.textContent = `${Math.round(researchCanvasState.scale * 100)}%`;
+  renderResearchLinks();
 }
 
 function updateResearchNodeCount() {
@@ -4429,12 +4984,19 @@ function setResearchStatus(message) {
 function syncResearchInspector(node) {
   const panel = document.querySelector(".research-tools");
   if (!panel) return;
-  const titleInput = panel.querySelector('input[value="对象标题"], input[data-research-inspector-title]');
+  const titleInput = $("#researchInspectorTitle");
+  const textInput = $("#researchInspectorText");
   const status = panel.querySelector(".research-section-title em");
   const name = node?.querySelector(".research-node-head strong")?.textContent || "对象标题";
   if (titleInput) {
-    titleInput.dataset.researchInspectorTitle = "1";
     titleInput.value = node ? name : "对象标题";
+    titleInput.disabled = !node;
+  }
+  if (textInput) {
+    const editable = node?.querySelector("textarea");
+    const description = node?.querySelector("p");
+    textInput.value = node ? (editable?.value || description?.textContent || "") : "";
+    textInput.disabled = !node;
   }
   if (status) status.textContent = node ? "已选中" : "未选中";
 }
@@ -4444,6 +5006,40 @@ function selectResearchNode(node) {
   researchCanvasState.activeNode = node || null;
   node?.classList.add("selected");
   syncResearchInspector(node);
+}
+
+function focusResearchNode(node) {
+  if (!node) return;
+  selectResearchNode(node);
+  const canvas = $("#researchCanvas");
+  if (!canvas) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const nodeWidth = Number(node.dataset.w || node.offsetWidth || 360);
+  const nodeHeight = node.offsetHeight || 260;
+  researchCanvasState.panX = Math.round((canvasRect.width / 2) - (Number(node.dataset.x || 0) + nodeWidth / 2) * researchCanvasState.scale);
+  researchCanvasState.panY = Math.round((canvasRect.height / 2) - (Number(node.dataset.y || 0) + nodeHeight / 2) * researchCanvasState.scale);
+  updateResearchStage();
+  node.classList.add("just-updated");
+  window.setTimeout(() => node.classList.remove("just-updated"), 1800);
+}
+
+function updateSelectedResearchNodeTitle(value) {
+  const node = researchCanvasState.activeNode;
+  if (!node) return;
+  const title = node.querySelector(".research-node-head strong");
+  if (title) title.textContent = value.trim() || "未命名节点";
+}
+
+function updateSelectedResearchNodeText(value) {
+  const node = researchCanvasState.activeNode;
+  if (!node) return;
+  const editable = node.querySelector("textarea");
+  if (editable) {
+    editable.value = value;
+    return;
+  }
+  const description = node.querySelector("p");
+  if (description) description.textContent = value || "节点说明";
 }
 
 function researchNodeTemplate(type, id) {
@@ -4462,7 +5058,7 @@ function researchNodeTemplate(type, id) {
     "text-to-image": {
       title: "文生图节点",
       meta: "TEXT-TO-IMAGE",
-      body: `<textarea aria-label="文生图提示词" placeholder="填写科研绘图提示词后启动文生图">${escapeHtml(promptText)}</textarea><button class="research-primary-button" data-research-generate-node="${escapeAttr(id)}" type="button">启动文生图</button>`,
+      body: `<textarea aria-label="文生图提示词" placeholder="填写科研绘图提示词后启动文生图">${escapeHtml(promptText)}</textarea><div class="research-node-grid"><label>比例<select><option>16:9</option><option>1:1</option><option>4:3</option><option>3:4</option><option>9:16</option></select></label><label>分辨率<select><option>2K</option><option>1K</option><option>4K</option></select></label><label>质量<select><option>Medium</option><option>High</option><option>Auto</option></select></label><label>格式<select><option>PNG</option><option>WEBP</option><option>JPEG</option></select></label><label>背景<select><option>Auto</option><option>透明</option></select></label></div><button class="research-primary-button" data-research-generate-node="${escapeAttr(id)}" type="button">启动文生图</button>`,
     },
     "image-to-image": {
       title: "图生图节点",
@@ -4478,6 +5074,7 @@ function researchNodeTemplate(type, id) {
       title: "科研图草图",
       meta: "GENERATED-IMAGE",
       body: `<div class="research-generated-preview"></div><p>等待生成科研图草图。</p>`,
+      headControl: `<span class="research-output-badge">输出</span>`,
     },
     diagram: {
       title: "流程图预览",
@@ -4494,7 +5091,7 @@ function researchNodeTemplate(type, id) {
   return `
     <div class="research-node-head">
       <div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.meta)}</small></div>
-      <select><option>gpt-image-2</option><option>gpt-5.5</option></select>
+      ${item.headControl || `<select class="research-image-model-select"><option>未检测到生图模型</option></select>`}
       <button type="button" data-research-remove-node>×</button>
     </div>
     ${item.body}
@@ -4518,6 +5115,7 @@ function createResearchNode(type = "prompt", options = {}) {
   node.innerHTML = researchNodeTemplate(type, id);
   stage.append(node);
   setResearchNodeGeometry(node);
+  syncResearchImageModelOptions(verifiedImageModels);
   selectResearchNode(node);
   updateResearchNodeCount();
   setResearchStatus(`已添加${node.querySelector(".research-node-head strong")?.textContent || "节点"}`);
@@ -4528,6 +5126,7 @@ function removeResearchNode(node) {
   if (!node) return;
   const name = node.querySelector(".research-node-head strong")?.textContent || "节点";
   if (researchCanvasState.activeNode === node) selectResearchNode(null);
+  clearResearchLinksForNode(node.dataset.nodeId);
   node.remove();
   updateResearchNodeCount();
   setResearchStatus(`已删除${name}`);
@@ -4565,7 +5164,6 @@ function generateResearchOutputs(sourceNode, options = {}) {
   let outputs = document.querySelectorAll(".research-node-output .research-generated-preview");
   if (!outputs.length) {
     createResearchNode("output", { x: 650, y: 90, w: 390 });
-    createResearchNode("output", { x: 650, y: 475, w: 390 });
     outputs = document.querySelectorAll(".research-node-output .research-generated-preview");
   }
   outputs.forEach((preview, index) => {
@@ -4618,9 +5216,9 @@ function autoLayoutResearchNodes() {
   const positions = [
     [105, 210],
     [650, 82],
-    [650, 475],
     [1080, 160],
     [105, 560],
+    [650, 475],
     [1080, 560],
   ];
   nodes.forEach((node, index) => {
@@ -4635,26 +5233,33 @@ function autoLayoutResearchNodes() {
 }
 
 function saveResearchProject() {
+  const signature = researchProjectSignature();
+  clearMismatchedResearchOutputs(signature);
   const payload = {
     prompt: $("#researchPrompt")?.value || "",
     diagram: $("#researchDiagramSource")?.value || "",
     subject: $("#researchSubject")?.value || "",
     context: $("#researchProjectContext")?.value || "",
+    signature,
+    links: researchCanvasState.links,
     nodes: [...document.querySelectorAll("#researchStage .research-node")].map((node) => ({
       id: node.dataset.nodeId,
       x: node.dataset.x,
       y: node.dataset.y,
       w: node.dataset.w,
+      researchJobId: node.dataset.researchJobId || "",
+      researchProjectSignature: node.dataset.researchProjectSignature || "",
+      researchPromptSignature: node.dataset.researchPromptSignature || "",
       html: node.innerHTML,
       className: node.className,
     })),
   };
-  localStorage.setItem("yy-research-project", JSON.stringify(payload));
+  localStorage.setItem(RESEARCH_PROJECT_STORAGE_KEY, JSON.stringify(payload));
   setResearchStatus("工程已保存到当前浏览器");
 }
 
 function loadResearchProject() {
-  const raw = localStorage.getItem("yy-research-project");
+  const raw = localStorage.getItem(RESEARCH_PROJECT_STORAGE_KEY);
   if (!raw) {
     setResearchStatus("当前浏览器没有已保存的科研工程");
     return;
@@ -4664,6 +5269,8 @@ function loadResearchProject() {
   if ($("#researchDiagramSource")) $("#researchDiagramSource").value = payload.diagram || "";
   if ($("#researchSubject")) $("#researchSubject").value = payload.subject || "";
   if ($("#researchProjectContext")) $("#researchProjectContext").value = payload.context || "";
+  activeResearchProjectSignature = payload.signature || researchProjectSignature();
+  const currentSignature = activeResearchProjectSignature;
   const stage = $("#researchStage");
   if (stage && Array.isArray(payload.nodes)) {
     stage.querySelectorAll(".research-node").forEach((node) => node.remove());
@@ -4674,15 +5281,72 @@ function loadResearchProject() {
       node.dataset.x = item.x || "120";
       node.dataset.y = item.y || "120";
       node.dataset.w = item.w || "320";
+      if (item.researchJobId) node.dataset.researchJobId = item.researchJobId;
+      if (item.researchProjectSignature) node.dataset.researchProjectSignature = item.researchProjectSignature;
+      if (item.researchPromptSignature) node.dataset.researchPromptSignature = item.researchPromptSignature;
       node.innerHTML = item.html || researchNodeTemplate("prompt", node.dataset.nodeId);
       stage.append(node);
       setResearchNodeGeometry(node);
+      if (node.classList.contains("research-node-output")) {
+        const outputSignature = node.dataset.researchProjectSignature || "";
+        if (!outputSignature || (currentSignature && outputSignature !== currentSignature)) {
+          resetResearchOutputNode(node, "等待生成当前科研图。");
+        }
+      }
     });
   }
+  researchCanvasState.links = Array.isArray(payload.links) ? payload.links.filter((link) => link.from && link.to) : [];
+  clearMismatchedResearchOutputs(currentSignature);
   renderResearchScssCards();
   updateResearchNodeCount();
+  renderResearchLinks();
   renderResearchDiagram();
   setResearchStatus("已读取浏览器中保存的科研工程");
+}
+
+function resetResearchProject() {
+  localStorage.removeItem(RESEARCH_PROJECT_STORAGE_KEY);
+  localStorage.removeItem(RESEARCH_ACTIVE_JOB_STORAGE_KEY);
+  activeResearchJobId = "";
+  activeResearchProjectSignature = "";
+  ["researchPrompt", "researchDiagramSource", "researchSubject", "researchProjectContext", "researchProjectContextMirror"].forEach((id) => {
+    const el = $(`#${id}`);
+    if (el) el.value = "";
+  });
+  const stage = $("#researchStage");
+  if (stage) {
+    stage.querySelectorAll(".research-node").forEach((node) => node.remove());
+    const promptNode = createResearchNode("text-to-image", { id: "prompt", x: 105, y: 210, w: 340 });
+    const outputNode = createResearchNode("output", { id: "output-a", x: 650, y: 82, w: 390 });
+    const diagramNode = createResearchNode("diagram", { id: "diagram-preview", x: 1080, y: 160, w: 460 });
+    if (promptNode) {
+      const title = promptNode.querySelector(".research-node-head strong");
+      if (title) title.textContent = "文生图节点";
+    }
+    if (outputNode) {
+      const title = outputNode.querySelector(".research-node-head strong");
+      if (title) title.textContent = "科研图 1";
+    }
+    if (diagramNode) {
+      const select = diagramNode.querySelector(".research-image-model-select");
+      if (select) {
+        const badge = document.createElement("span");
+        badge.className = "research-output-badge";
+        badge.textContent = "Mermaid";
+        select.replaceWith(badge);
+      }
+    }
+  }
+  researchCanvasState.links = [{ from: "prompt", to: "output-a" }];
+  researchCanvasState.scale = 1;
+  researchCanvasState.panX = 0;
+  researchCanvasState.panY = 0;
+  renderResearchScssCards();
+  updateResearchNodeCount();
+  updateResearchStage();
+  renderResearchDiagram();
+  selectResearchNode(researchNodeById("prompt"));
+  setResearchStatus("已恢复科研工作台默认界面");
 }
 
 function zoomResearchCanvas(nextScale, origin) {
@@ -4719,8 +5383,39 @@ function initResearchCanvasEngine() {
     });
   }, { passive: false });
 
+  const startResearchLink = (event, node) => {
+    selectResearchNode(node);
+    const point = researchCanvasPoint(canvas, event);
+    researchCanvasState.pointerId = event.pointerId;
+    researchCanvasState.startClientX = event.clientX;
+    researchCanvasState.startClientY = event.clientY;
+    researchCanvasState.action = "link";
+    researchCanvasState.linkDraft = {
+      from: node.dataset.nodeId,
+      fromPoint: researchPortPoint(node, "out"),
+      toPoint: point,
+    };
+    node.classList.add("linking");
+    canvas.classList.add("linking");
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    canvas.setPointerCapture?.(event.pointerId);
+    renderResearchLinks();
+    setResearchStatus("拖到目标节点的 IN 端口建立连线；也可以先点 OUT 再点 IN");
+  };
+
+  canvas.addEventListener("pointerdown", (event) => {
+    const port = event.target.closest(".research-port");
+    const node = event.target.closest(".research-node");
+    if (node && port?.classList.contains("out")) {
+      startResearchLink(event, node);
+    }
+  }, { capture: true });
+
   canvas.addEventListener("pointerdown", (event) => {
     const handle = event.target.closest(".research-resize-handle");
+    const port = event.target.closest(".research-port");
     const node = event.target.closest(".research-node");
     const interactive = event.target.closest("input, textarea, select, button");
     canvas.focus({ preventScroll: true });
@@ -4729,6 +5424,11 @@ function initResearchCanvasEngine() {
     researchCanvasState.startClientY = event.clientY;
     researchCanvasState.startPanX = researchCanvasState.panX;
     researchCanvasState.startPanY = researchCanvasState.panY;
+
+    if (node && port?.classList.contains("out")) {
+      event.preventDefault();
+      return;
+    }
 
     if (node && interactive && !handle) {
       selectResearchNode(node);
@@ -4767,6 +5467,13 @@ function initResearchCanvasEngine() {
       updateResearchStage();
       return;
     }
+    if (action === "link") {
+      if (researchCanvasState.linkDraft) {
+        researchCanvasState.linkDraft.toPoint = researchCanvasPoint(canvas, event);
+        renderResearchLinks();
+      }
+      return;
+    }
     const node = researchCanvasState.activeNode;
     if (!node) return;
     const point = researchCanvasPoint(canvas, event);
@@ -4789,6 +5496,19 @@ function initResearchCanvasEngine() {
   });
 
   const finishPointerAction = (event) => {
+    if (researchCanvasState.action === "link") {
+      const targetPort = document.elementFromPoint(event.clientX, event.clientY)?.closest?.(".research-port.in");
+      const targetNode = targetPort?.closest(".research-node");
+      if (targetNode && researchCanvasState.linkDraft?.from) {
+        addResearchLink(researchCanvasState.linkDraft.from, targetNode.dataset.nodeId);
+      } else {
+        setResearchStatus("连线已取消：请松开到目标节点的 IN 端口");
+      }
+      researchCanvasState.linkDraft = null;
+      canvas.classList.remove("linking");
+      document.querySelectorAll(".research-node.linking").forEach((node) => node.classList.remove("linking"));
+      renderResearchLinks();
+    }
     if (researchCanvasState.pointerId !== null) {
       canvas.releasePointerCapture?.(researchCanvasState.pointerId);
     }
@@ -4821,6 +5541,16 @@ function initResearchWorkbench() {
   renderResearchPromptRepo();
   renderResearchSkills();
   renderResearchScssCards();
+  $("#researchBuildPrompt")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    generateResearchPromptWithAi(event.currentTarget);
+  }, true);
+  $("#researchBuildDiagram")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    generateResearchDiagramWithAi(event.currentTarget);
+  }, true);
   $("#researchBuildPrompt")?.addEventListener("click", () => {
     if (prompt) prompt.value = buildResearchPrompt();
     renderResearchScssCards();
@@ -4870,12 +5600,13 @@ function initResearchWorkbench() {
     $("#researchPromptRepo")?.scrollIntoView({ block: "center", behavior: "smooth" });
     setResearchStatus("已定位到提示词仓库");
   });
-  $("#researchGenerateAll")?.addEventListener("click", () => submitResearchGenerationJob(researchCanvasState.activeNode));
+  $("#researchGenerateAll")?.addEventListener("click", () => submitResearchGenerationJob(null));
   $("#researchExportSvg")?.addEventListener("click", exportResearchDiagramSvg);
   $("#researchExportPng")?.addEventListener("click", exportResearchDiagramPng);
   $("#researchAutoLayout")?.addEventListener("click", autoLayoutResearchNodes);
   $("#researchSaveProject")?.addEventListener("click", saveResearchProject);
   $("#researchLoadProject")?.addEventListener("click", loadResearchProject);
+  $("#researchResetProject")?.addEventListener("click", resetResearchProject);
   $("#researchToggleLeft")?.addEventListener("click", (event) => {
     researchRoot.classList.toggle("left-collapsed");
     event.currentTarget.classList.toggle("active", !researchRoot.classList.contains("left-collapsed"));
@@ -4887,6 +5618,8 @@ function initResearchWorkbench() {
   $("#researchPaperInput")?.addEventListener("change", (event) => readResearchPaperFile(event.currentTarget));
   $("#researchLineInput")?.addEventListener("change", (event) => previewResearchFile(event.currentTarget, $("#researchLinePreview")));
   $("#researchColorInput")?.addEventListener("change", (event) => previewResearchFile(event.currentTarget, $("#researchColorPreview")));
+  $("#researchInspectorTitle")?.addEventListener("input", (event) => updateSelectedResearchNodeTitle(event.currentTarget.value));
+  $("#researchInspectorText")?.addEventListener("input", (event) => updateSelectedResearchNodeText(event.currentTarget.value));
   document.querySelectorAll("[data-research-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll("[data-research-mode]").forEach((item) => item.classList.toggle("active", item === button));
@@ -4918,6 +5651,23 @@ function initResearchWorkbench() {
     });
   });
   $("#researchStage")?.addEventListener("click", (event) => {
+    const port = event.target.closest(".research-port");
+    if (port) {
+      event.preventDefault();
+      const node = port.closest(".research-node");
+      if (!node) return;
+      if (port.classList.contains("out")) {
+        researchCanvasState.pendingLinkFrom = node.dataset.nodeId || "";
+        document.querySelectorAll(".research-node.pending-link").forEach((item) => item.classList.remove("pending-link"));
+        node.classList.add("pending-link");
+        setResearchStatus("已选中输出端口，请点击目标节点的 IN");
+        return;
+      }
+      if (port.classList.contains("in") && researchCanvasState.pendingLinkFrom) {
+        addResearchLink(researchCanvasState.pendingLinkFrom, node.dataset.nodeId);
+        return;
+      }
+    }
     const removeButton = event.target.closest("[data-research-remove-node]");
     if (removeButton) {
       event.preventDefault();
@@ -5060,12 +5810,22 @@ els.regenerateAgent.addEventListener("click", generateAgentPlan);
 els.disableAgent.addEventListener("click", disableSelectedAgent);
 els.model?.addEventListener("change", () => {
   if (els.model.value) localStorage.setItem(SELECTED_IMAGE_MODEL_KEY, els.model.value);
+  syncResearchImageModelOptions(verifiedImageModels);
 });
 els.analysisModel?.addEventListener("change", () => {
   if (els.analysisModel.value) localStorage.setItem(SELECTED_TEXT_MODEL_KEY, els.analysisModel.value);
+  syncResearchTextModelOptions(verifiedTextModels);
 });
 els.manualTextModel?.addEventListener("input", () => {
   localStorage.setItem(MANUAL_TEXT_MODEL_KEY, els.manualTextModel.value.trim());
+  syncResearchTextModelOptions(verifiedTextModels);
+});
+els.researchTextModel?.addEventListener("change", () => {
+  const value = els.researchTextModel.value;
+  if (value && els.analysisModel && cleanTextModelList(verifiedTextModels).includes(value)) {
+    els.analysisModel.value = value;
+    localStorage.setItem(SELECTED_TEXT_MODEL_KEY, value);
+  }
 });
 els.agentWorkspace.addEventListener("click", (event) => {
   const target = event.target.closest("[data-agent-variant]");

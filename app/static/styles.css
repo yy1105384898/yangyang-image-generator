@@ -4253,7 +4253,7 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
 .admin-image-card {
   display: grid;
   gap: 10px;
-  padding: 10px;
+  padding: 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fbfbfa;
@@ -4265,6 +4265,11 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
   color: var(--muted);
   font-size: 12px;
   font-weight: 850;
+}
+.admin-image-preview-link {
+  display: block;
+  border-radius: 6px;
+  overflow: hidden;
 }
 .admin-image-card img {
   width: 100%;
@@ -4282,6 +4287,27 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
   line-height: 1.45;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+.admin-image-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.admin-image-actions a {
+  display: inline-grid;
+  min-height: 24px;
+  place-items: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #e8f8f2;
+  color: #00665f;
+  font-size: 11px;
+  font-weight: 880;
+  text-decoration: none;
+}
+.admin-image-actions a:hover {
+  background: #d7f1e7;
 }
 .admin-log-list {
   display: grid;
@@ -5981,21 +6007,23 @@ body.research-active .research-workbench {
   position: absolute;
   left: 0;
   top: 0;
-  width: 1180px;
-  height: 820px;
+  width: 1800px;
+  height: 980px;
   overflow: visible;
   pointer-events: none;
 }
 
-.research-links path {
+.research-link-path {
   fill: none;
   stroke: var(--green);
   stroke-width: 3;
   stroke-linecap: round;
+  filter: drop-shadow(0 3px 5px rgba(0, 123, 114, .14));
 }
 
-.research-links path::after {
-  content: "";
+.research-link-path.draft {
+  stroke-dasharray: 8 7;
+  opacity: .72;
 }
 
 .research-node {
@@ -6016,8 +6044,19 @@ body.research-active .research-workbench {
   box-shadow: 0 16px 36px rgba(16, 163, 127, .14), 0 0 0 2px rgba(16, 163, 127, .12);
 }
 
+.research-node.just-updated {
+  border-color: #007b72;
+  box-shadow: 0 18px 40px rgba(0, 123, 114, .24), 0 0 0 5px rgba(0, 123, 114, .18);
+}
+
 .research-node.dragging {
   cursor: grabbing;
+}
+
+.research-node.linking,
+.research-node.pending-link,
+.research-canvas.linking .research-node.selected {
+  border-color: #007b72;
 }
 
 .research-node p {
@@ -6116,6 +6155,7 @@ body.research-active .research-workbench {
 }
 
 .research-generated-preview {
+  position: relative;
   display: grid;
   place-items: center;
   align-content: center;
@@ -6139,6 +6179,65 @@ body.research-active .research-workbench {
     linear-gradient(135deg, #fff, #f4fbf7 48%, #e8f8f2);
   background-size: 18px 18px, 18px 18px, auto, auto;
   color: var(--green);
+}
+
+.research-output-badge {
+  display: inline-grid;
+  min-height: 32px;
+  place-items: center;
+  padding: 0 11px;
+  border: 1px solid rgba(0, 123, 114, .18);
+  border-radius: 8px;
+  background: #e8f8f2;
+  color: #00665f;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.research-generated-preview.loading {
+  animation: researchPulse 1.4s ease-in-out infinite;
+}
+
+.research-generated-preview.failed {
+  border-color: #f0b2bf;
+  background: #fff5f7;
+  color: #a9354f;
+}
+
+.research-generated-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.research-download-button {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-grid;
+  min-width: 64px;
+  min-height: 30px;
+  place-items: center;
+  border: 1px solid rgba(0, 102, 95, .22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .94);
+  color: #00665f;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .12);
+}
+
+.research-download-button:hover {
+  background: #e8f8f2;
+}
+
+@keyframes researchPulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.72), 0 0 0 0 rgba(0, 123, 114, .10); }
+  50% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.72), 0 0 0 8px rgba(0, 123, 114, .06); }
 }
 
 .research-generated-preview strong {
@@ -6195,33 +6294,65 @@ body.research-active .research-workbench {
 .research-port {
   position: absolute;
   display: grid;
-  min-width: 28px;
-  height: 24px;
+  width: 36px;
+  height: 36px;
   place-items: center;
-  border: 1px solid var(--border);
+  border: 2px solid rgba(0, 123, 114, .28);
   border-radius: 999px;
-  background: var(--green-soft);
+  background: #dff6ee;
   color: var(--green);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
+  cursor: crosshair;
+  transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+  z-index: 6;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.research-port:hover,
+.research-node.linking .research-port.out,
+.research-node.pending-link .research-port.out {
+  transform: scale(1.14);
+  box-shadow: 0 0 0 7px rgba(0, 123, 114, .14);
+}
+
+.research-canvas.linking .research-port.in {
+  background: #0b8f72;
+  border-color: #00665f;
+  color: #fff;
 }
 
 .research-port.in {
-  left: 14px;
-  bottom: 12px;
+  left: -18px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .research-port.out {
-  right: 14px;
-  bottom: 12px;
+  right: -18px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.research-port.in:hover {
+  transform: translateY(-50%) scale(1.14);
+}
+
+.research-port.out:hover,
+.research-node.linking .research-port.out,
+.research-node.pending-link .research-port.out {
+  transform: translateY(-50%) scale(1.14);
 }
 
 .research-resize-handle {
   position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 16px;
-  height: 16px;
+  right: 8px;
+  bottom: 8px;
+  width: 18px;
+  height: 18px;
   border: 0;
   border-radius: 4px 0 6px;
   background:
