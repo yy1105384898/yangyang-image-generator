@@ -2273,6 +2273,22 @@ body.research-active .studio-view {
   border-color: #9cc8af;
   background: #fff;
 }
+.reference-aspect-button {
+  min-height: 42px;
+  align-self: end;
+  border: 1px solid rgba(16, 163, 127, .28);
+  border-radius: 10px;
+  background: rgba(232, 250, 244, .92);
+  color: #06745e;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: -.01em;
+  cursor: default;
+}
+.reference-aspect-button:disabled {
+  opacity: .82;
+}
 .composer-main textarea {
   width: 100%;
   height: 44px;

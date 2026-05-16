@@ -30,6 +30,7 @@ const els = {
   closeQuickConfig: $("#closeQuickConfig"),
   quickCount: $("#quickCount"),
   quickAspect: $("#quickAspect"),
+  matchReferenceAspect: $("#matchReferenceAspect"),
   quickResolution: $("#quickResolution"),
   quickConcurrency: $("#quickConcurrency"),
   quickQuality: $("#quickQuality"),
@@ -183,6 +184,7 @@ let appliedAgentVariant = null;
 let previewAgentVariant = "stable";
 let agentModePlan = null;
 let promptAnalysisPlan = null;
+let referenceAspectAutoValue = "";
 let customIndustryAgents = [];
 let agentComposerExpanded = false;
 let guideStep = 0;
@@ -895,7 +897,103 @@ function requestSize() {
   return requestSizeFor(els.aspectRatio.value, els.resolution.value);
 }
 
+function parseAspectRatioValue(value = "") {
+  const match = String(value || "").match(/^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*$/);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return width / height;
+}
+
+function selectedReferenceItems() {
+  return state.references.filter((ref) => selectedReferenceIds.has(ref.id));
+}
+
+function singleReferenceAspect() {
+  const refs = selectedReferenceItems();
+  if (refs.length !== 1) return null;
+  const ref = refs[0];
+  const width = Number(ref.width || 0);
+  const height = Number(ref.height || 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return { ref, ratio: width / height, label: `${width}x${height}` };
+}
+
+function closestAspectOptionForRatio(ratio) {
+  if (!Number.isFinite(ratio) || ratio <= 0 || !els.aspectRatio) return "";
+  let best = "";
+  let bestDistance = Infinity;
+  [...els.aspectRatio.options].forEach((option) => {
+    const optionRatio = parseAspectRatioValue(option.value);
+    if (!optionRatio) return;
+    const distance = Math.abs(Math.log(ratio / optionRatio));
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = option.value;
+    }
+  });
+  return best;
+}
+
+function referenceAspectCandidate() {
+  const aspect = singleReferenceAspect();
+  if (!aspect) return null;
+  const value = closestAspectOptionForRatio(aspect.ratio);
+  return value ? { ...aspect, value } : null;
+}
+
+function applyReferenceAspectRatio({ announce = false } = {}) {
+  const candidate = referenceAspectCandidate();
+  if (!candidate) {
+    if (announce) showReferenceLimitHint("仅选中 1 张带尺寸信息的参考图时，才能按参考图比例生成");
+    return false;
+  }
+  els.aspectRatio.value = candidate.value;
+  if (els.quickAspect) els.quickAspect.value = candidate.value;
+  referenceAspectAutoValue = candidate.value;
+  syncSummary();
+  if (announce) {
+    showReferenceLimitHint(`已按参考图 ${candidate.label} 匹配为 ${candidate.value}`);
+  }
+  return true;
+}
+
+function syncReferenceAspectAuto({ announce = false } = {}) {
+  const candidate = referenceAspectCandidate();
+  if (!candidate) {
+    referenceAspectAutoValue = "";
+    return false;
+  }
+  if (els.aspectRatio.value !== candidate.value || referenceAspectAutoValue !== candidate.value) {
+    return applyReferenceAspectRatio({ announce });
+  }
+  referenceAspectAutoValue = candidate.value;
+  return true;
+}
+
+function syncReferenceAspectControl() {
+  if (!els.matchReferenceAspect) return;
+  const refs = selectedReferenceItems();
+  const candidate = referenceAspectCandidate();
+  const disabledReason = refs.length > 1
+    ? "多张参考图比例可能不一致，仅单张可用"
+    : refs.length === 1
+      ? "参考图缺少尺寸信息"
+      : "先选择 1 张参考图";
+  els.matchReferenceAspect.classList.toggle("hidden", refs.length !== 1);
+  els.matchReferenceAspect.disabled = !candidate;
+  els.matchReferenceAspect.textContent = candidate ? `已按参考图 · ${candidate.value}` : "按参考图比例";
+  els.matchReferenceAspect.title = candidate
+    ? `参考图 ${candidate.label}，生成比例已自适应为 ${candidate.value}`
+    : disabledReason;
+}
+
 function describeAspect() {
+  const candidate = referenceAspectCandidate();
+  if (candidate && els.aspectRatio.value === candidate.value) {
+    return `单张参考图自适应 · 原图 ${candidate.label}`;
+  }
   const labels = {
     "1:1": "GPT Image 官方方图尺寸",
     "4:5": "竖版社媒封面常用比例",
@@ -1039,6 +1137,7 @@ function setQuickConfigPanel(open) {
 }
 
 function syncSummary() {
+  syncReferenceAspectAuto();
   normalizeGenerationNumbers();
   syncQualityOptionsForModel();
   const protocol = protocols[els.protocol.value] || protocols["custom-openai"];
@@ -1072,10 +1171,15 @@ function syncSummary() {
       <small>${escapeHtml(body)}</small>
     `;
   }
+  if (els.promptAnalysisCard && !els.promptAnalysisCard.classList.contains("hidden")) {
+    if (els.analysisAspect) els.analysisAspect.textContent = els.aspectRatio.value;
+    if (els.analysisSize) els.analysisSize.textContent = requestSize();
+  }
   [els.optimizePrompt, els.recommendParams, els.predictFailure, els.enhanceStyle].forEach((button) => {
     if (button) button.disabled = !hasPrompt;
   });
   syncQuickConfigControls();
+  syncReferenceAspectControl();
 }
 
 function setConnectionMode(mode, options = {}) {
@@ -2339,7 +2443,7 @@ function applyAgentModePlan(plan) {
   if (plan.title && !els.title.value.trim()) {
     els.title.value = String(plan.title).trim();
   }
-  if (plan.aspect_ratio && [...els.aspectRatio.options].some((option) => option.value === plan.aspect_ratio)) {
+  if (!referenceAspectCandidate() && plan.aspect_ratio && [...els.aspectRatio.options].some((option) => option.value === plan.aspect_ratio)) {
     els.aspectRatio.value = plan.aspect_ratio;
   }
   if (plan.count) {
@@ -3273,6 +3377,7 @@ function renderReferences() {
   if (!state.references.length) {
     els.composerReferenceList?.classList.add("hidden");
     els.referenceSendSummary?.classList.add("hidden");
+    syncReferenceAspectControl();
     return;
   }
   for (const ref of state.references.slice(0, 12)) {
@@ -3293,10 +3398,16 @@ function renderReferences() {
         showReferenceLimitHint();
       }
       renderReferences();
+      syncSummary();
     });
     els.referenceList.append(btn);
   }
-  const selectedRefs = state.references.filter((ref) => selectedReferenceIds.has(ref.id));
+  const selectedRefs = selectedReferenceItems();
+  if (selectedRefs.length === 1) {
+    syncReferenceAspectAuto({ announce: true });
+  } else {
+    referenceAspectAutoValue = "";
+  }
   if (els.referenceSendSummary) {
     els.referenceSendSummary.textContent = selectedRefs.length
       ? `将发送参考图 ${selectedRefs.length}/${MAX_REFERENCE_SELECTION}`
@@ -3304,6 +3415,7 @@ function renderReferences() {
     els.referenceSendSummary.classList.toggle("hidden", !selectedRefs.length);
     els.referenceSendSummary.classList.toggle("limit", selectedRefs.length >= MAX_REFERENCE_SELECTION);
   }
+  syncReferenceAspectControl();
   if (!els.composerReferenceList) return;
   els.composerReferenceList.classList.toggle("hidden", !selectedRefs.length);
   selectedRefs.forEach((ref) => {
@@ -4301,7 +4413,7 @@ function applyRecommendedParams() {
     return;
   }
   if (promptAnalysisPlan) {
-    if (promptAnalysisPlan.aspect_ratio && [...els.aspectRatio.options].some((option) => option.value === promptAnalysisPlan.aspect_ratio)) {
+    if (!referenceAspectCandidate() && promptAnalysisPlan.aspect_ratio && [...els.aspectRatio.options].some((option) => option.value === promptAnalysisPlan.aspect_ratio)) {
       els.aspectRatio.value = promptAnalysisPlan.aspect_ratio;
     }
     if (promptAnalysisPlan.count) {
@@ -6202,6 +6314,7 @@ els.clearPrompt?.addEventListener("click", () => {
 });
 els.referenceUploadButton.addEventListener("click", () => els.referenceUpload.click());
 els.referenceUpload.addEventListener("change", uploadReference);
+els.matchReferenceAspect?.addEventListener("click", () => applyReferenceAspectRatio({ announce: true }));
 els.clearMedia.addEventListener("click", clearMedia);
 els.toggleHistory?.addEventListener("click", () => {
   historyExpanded = !historyExpanded;
