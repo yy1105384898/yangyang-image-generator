@@ -69,6 +69,7 @@ const els = {
   reuseTextApiKey: $("#reuseTextApiKey"),
   textApiKeyField: $("#textApiKeyField"),
   textApiKey: $("#textApiKey"),
+  textApiKeyStatus: $("#textApiKeyStatus"),
   aspectRatio: $("#aspectRatio"),
   resolution: $("#resolution"),
   count: $("#count"),
@@ -117,6 +118,17 @@ const els = {
   configPanel: $("#configPanel"),
   collapseRight: $("#collapseRight"),
   mobileShellBackdrop: $("#mobileShellBackdrop"),
+  mediaPreviewModal: $("#mediaPreviewModal"),
+  mediaPreviewTitle: $("#mediaPreviewTitle"),
+  mediaPreviewMeta: $("#mediaPreviewMeta"),
+  mediaPreviewImage: $("#mediaPreviewImage"),
+  mediaPreviewAgent: $("#mediaPreviewAgent"),
+  mediaPreviewPrompt: $("#mediaPreviewPrompt"),
+  mediaPreviewOpen: $("#mediaPreviewOpen"),
+  mediaPreviewDownload: $("#mediaPreviewDownload"),
+  mediaPreviewReuse: $("#mediaPreviewReuse"),
+  mediaPreviewReuseRefs: $("#mediaPreviewReuseRefs"),
+  closeMediaPreview: $("#closeMediaPreview"),
   agentEntry: $("#agentEntry"),
   agentClearButton: $("#agentClearButton"),
   agentAppliedStatus: $("#agentAppliedStatus"),
@@ -180,6 +192,8 @@ let submitInFlight = false;
 let activeSubmitRequestId = "";
 let preflightAnalysisInFlight = false;
 let preflightCancelled = false;
+let activeMediaPreviewItem = null;
+let textModelRefreshTimer = 0;
 let activeResearchJobId = "";
 let activeResearchProjectSignature = "";
 const RESEARCH_PROJECT_STORAGE_KEY = "yy-research-project";
@@ -361,6 +375,9 @@ const CUSTOM_API_URL_KEY = "yangyang_image_custom_api_url";
 const SELECTED_IMAGE_MODEL_KEY = "yangyang_image_selected_model";
 const SELECTED_TEXT_MODEL_KEY = "yangyang_image_selected_text_model";
 const MANUAL_TEXT_MODEL_KEY = "yangyang_image_manual_text_model";
+const TEXT_API_URL_KEY = "yangyang_image_text_api_url";
+const TEXT_API_KEY_STORAGE_KEY = "yangyang_image_text_api_key";
+const SEND_OPTIMIZE_KEY = "yangyang_image_send_optimize";
 const ALLOWED_CONNECTION_MODES = new Set(["custom", "pool"]);
 let debugCustomApi = {
   enabled: Boolean(modelConfig.debug?.workbench_custom_api),
@@ -1130,6 +1147,14 @@ function loadApiKeyPreference() {
     els.apiKey.value = saved;
     els.rememberApiKey.checked = true;
   }
+  const textUrl = localStorage.getItem(TEXT_API_URL_KEY) || "";
+  const textKey = localStorage.getItem(TEXT_API_KEY_STORAGE_KEY) || "";
+  if (textUrl && els.textApiUrl) els.textApiUrl.value = textUrl;
+  if (textKey && els.textApiKey) els.textApiKey.value = textKey;
+  if (els.sendOptimize) {
+    els.sendOptimize.checked = localStorage.getItem(SEND_OPTIMIZE_KEY) === "1";
+  }
+  syncTextApiKeyStatus();
 }
 
 function saveApiKeyPreference() {
@@ -1243,6 +1268,64 @@ function jobIndustry(job) {
     return { id: matched.id, name: matched.name, variant: "", source: "inferred" };
   }
   return { id: "general", name: "通用生图", variant: "", source: "general" };
+}
+
+function syncTextApiKeyStatus(message = "") {
+  const hasBackendKey = debugTextRouteActive();
+  const hasTextKey = hasBackendKey || Boolean((els.textApiKey?.value || localStorage.getItem(TEXT_API_KEY_STORAGE_KEY) || "").trim());
+  if (els.textApiKeyStatus) {
+    els.textApiKeyStatus.textContent = message || (hasBackendKey ? "管理后台文本 Key 已配置" : (hasTextKey ? "文本 Key 已配置" : "未配置文本 Key"));
+    els.textApiKeyStatus.classList.toggle("success", hasTextKey);
+    els.textApiKeyStatus.classList.toggle("error", !hasTextKey && Boolean(message));
+  }
+  if (els.textApiKey && hasTextKey && !hasBackendKey) {
+    els.textApiKey.placeholder = "•••••••• 已保存文本 Key";
+  }
+}
+
+function saveTextApiPreference() {
+  if (els.textApiUrl && !els.reuseTextApiUrl?.checked && els.textApiUrl.value.trim()) {
+    localStorage.setItem(TEXT_API_URL_KEY, els.textApiUrl.value.trim());
+  }
+  if (els.textApiKey && !els.reuseTextApiKey?.checked && els.textApiKey.value.trim()) {
+    localStorage.setItem(TEXT_API_KEY_STORAGE_KEY, els.textApiKey.value.trim());
+  }
+  if (els.manualTextModel?.value.trim()) {
+    localStorage.setItem(MANUAL_TEXT_MODEL_KEY, els.manualTextModel.value.trim());
+  }
+  syncTextApiKeyStatus();
+}
+
+function canAutoRefreshTextModels() {
+  return Boolean(
+    els.manualTextModelPanel &&
+    !els.manualTextModelPanel.classList.contains("hidden") &&
+    !els.reuseTextApiKey?.checked &&
+    selectedTextApiUrl() &&
+    selectedTextApiKey()
+  );
+}
+
+function scheduleTextModelRefresh({ immediate = false } = {}) {
+  window.clearTimeout(textModelRefreshTimer);
+  saveTextApiPreference();
+  if (!canAutoRefreshTextModels()) return;
+  textModelRefreshTimer = window.setTimeout(() => {
+    refreshTextModelsOnly({ silent: true });
+  }, immediate ? 0 : 650);
+}
+
+function displayJobTitle(job = {}) {
+  const rawTitle = String(job.title || "").trim();
+  const industry = jobIndustry(job);
+  const titleLooksLikeDifferentAgent = rawTitle
+    && industry.source === "agent"
+    && rawTitle !== industry.name
+    && availableIndustryAgents().some((agent) => agent.name === rawTitle);
+  if (titleLooksLikeDifferentAgent) {
+    return industry.name;
+  }
+  return rawTitle || String(job.prompt || "").trim() || "未命名任务";
 }
 
 function compactText(value = "") {
@@ -1612,8 +1695,9 @@ function syncTextModelFields() {
     if (useBackendTextKey) els.textApiKey.value = "";
     els.textApiKey.placeholder = useBackendTextKey
       ? "调试中无需填写，后端使用管理后台文本 Key"
-      : "填写有 GPT 文本模型权限的 Key";
+      : (localStorage.getItem(TEXT_API_KEY_STORAGE_KEY) ? "•••••••• 已保存文本 Key" : "填写有 GPT 文本模型权限的 Key");
   }
+  syncTextApiKeyStatus();
 }
 
 function replaceTextModelOptions(models = []) {
@@ -1623,7 +1707,6 @@ function replaceTextModelOptions(models = []) {
   const current = els.analysisModel.value || saved;
   els.analysisModel.innerHTML = "";
   if (models.length) {
-    if (els.reuseTextApiKey) els.reuseTextApiKey.checked = true;
     for (const model of models) {
       const option = document.createElement("option");
       option.value = model;
@@ -1646,6 +1729,7 @@ function replaceTextModelOptions(models = []) {
   }
   syncResearchTextModelOptions(models);
   syncTextModelFields();
+  if (!models.length) scheduleTextModelRefresh({ immediate: true });
 }
 
 function syncResearchTextModelOptions(models = verifiedTextModels) {
@@ -1686,12 +1770,12 @@ function selectedTextModelLabel() {
 
 function selectedTextApiUrl() {
   if (debugTextRouteActive()) return (debugCustomApi.text?.apiUrl || selectedApiUrl()).trim();
-  return (els.reuseTextApiUrl?.checked ? selectedApiUrl() : els.textApiUrl?.value || "").trim();
+  return (els.reuseTextApiUrl?.checked ? selectedApiUrl() : (els.textApiUrl?.value || localStorage.getItem(TEXT_API_URL_KEY) || "")).trim();
 }
 
 function selectedTextApiKey() {
   if (debugTextRouteActive()) return "";
-  return (els.reuseTextApiKey?.checked ? selectedApiKey() : els.textApiKey?.value || "").trim();
+  return (els.reuseTextApiKey?.checked ? selectedApiKey() : (els.textApiKey?.value || localStorage.getItem(TEXT_API_KEY_STORAGE_KEY) || "")).trim();
 }
 
 function renderAvailableModels(models = verifiedImageModels) {
@@ -1722,9 +1806,14 @@ function renderAvailableModels(models = verifiedImageModels) {
 
 function selectIndustryAgent(agent, { preserveCurrent = true } = {}) {
   if (!agent) return;
+  const previousAgentName = selectedAgent?.name || "";
   const sameAgent = preserveCurrent && selectedAgent?.id === agent.id;
   selectedAgent = agent;
   if (!sameAgent) {
+    const currentTitle = els.title?.value.trim() || "";
+    if (els.title && (!currentTitle || currentTitle === previousAgentName)) {
+      els.title.value = agent.name;
+    }
     agentGenerated = false;
     agentPlan = null;
     agentPlanRevision = 0;
@@ -2750,7 +2839,7 @@ function renderHistory() {
             btn.type = "button";
             btn.className = `history-item ${job.status} ${selectedHistoryJobId === job.id ? "active" : ""}`;
             btn.innerHTML = `
-              <strong>${escapeHtml(job.title || job.prompt || "未命名任务")}</strong>
+              <strong>${escapeHtml(displayJobTitle(job))}</strong>
               <span>${statusText(job.status)} · ${historyTimeLabel(job.created_at)} · ${escapeHtml(job.model || "")}</span>
             `;
             btn.addEventListener("click", () => {
@@ -2924,6 +3013,50 @@ function reuseItemReferences(item) {
   els.prompt?.focus();
 }
 
+function applyGalleryItemToPrompt(item, withReferences = false) {
+  if (!item) return;
+  els.prompt.value = item.prompt || "";
+  if (withReferences) {
+    reuseItemReferences(item);
+  } else {
+    selectedReferenceIds.clear();
+    renderReferences();
+  }
+  syncSummary();
+}
+
+function setMediaPreview(open = false, item = activeMediaPreviewItem) {
+  if (!els.mediaPreviewModal) return;
+  activeMediaPreviewItem = open ? item : null;
+  els.mediaPreviewModal.classList.toggle("hidden", !open);
+  document.body.classList.toggle("media-preview-open", open);
+  if (!open || !item) {
+    if (els.mediaPreviewImage) els.mediaPreviewImage.removeAttribute("src");
+    return;
+  }
+  const meta = [
+    item.title || "生成图片",
+    item.aspect_ratio,
+    item.resolution,
+    item.actual_size || item.size,
+  ].filter(Boolean).join(" · ");
+  if (els.mediaPreviewTitle) els.mediaPreviewTitle.textContent = item.title || "生成图片";
+  if (els.mediaPreviewMeta) els.mediaPreviewMeta.textContent = meta;
+  if (els.mediaPreviewImage) {
+    els.mediaPreviewImage.src = item.url || "";
+    els.mediaPreviewImage.alt = item.prompt || "生成图片";
+  }
+  if (els.mediaPreviewPrompt) els.mediaPreviewPrompt.textContent = item.prompt || "暂无提示词";
+  if (els.mediaPreviewOpen) els.mediaPreviewOpen.href = item.url || "#";
+  if (els.mediaPreviewDownload) els.mediaPreviewDownload.href = item.url || "#";
+  if (els.mediaPreviewAgent) {
+    const agentText = item.agentName ? `✣ ${item.agentName} ${item.agentVariant ? variantLabel(item.agentVariant) : ""}` : "";
+    els.mediaPreviewAgent.textContent = agentText;
+    els.mediaPreviewAgent.classList.toggle("hidden", !agentText);
+  }
+  els.mediaPreviewReuseRefs?.classList.toggle("hidden", !item.references?.length);
+}
+
 function renderMedia() {
   const items = galleryItems();
   selectedGalleryIds = new Set([...selectedGalleryIds].filter((id) => items.some((item) => item.id === id)));
@@ -2990,7 +3123,7 @@ function renderMedia() {
           ${item.url ? `<a href="${escapeAttr(item.url)}" target="_blank" rel="noopener">打开</a><a href="${escapeAttr(item.url)}" download>下载</a>` : ""}
           ${item.status === "error" ? `<button type="button" class="retry" data-card-action="retry">重试</button>` : ""}
           <button type="button" data-card-action="reuse">复用</button>
-          ${item.references?.length ? `<button type="button" data-card-action="reuse-with-references">参考图复用</button>` : ""}
+          ${item.references?.length ? `<button type="button" data-card-action="reuse-with-references" title="连同参考图一起复用">参考</button>` : ""}
         </div>
       </div>
     `;
@@ -2998,20 +3131,19 @@ function renderMedia() {
       event.stopPropagation();
       toggleGalleryItem(item.id);
     });
+    card.querySelector(".image-preview-frame")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (item.url) setMediaPreview(true, item);
+    });
     card.addEventListener("click", (event) => {
       if (event.target.closest("a,button")) return;
       toggleGalleryItem(item.id);
     });
     card.querySelector('[data-card-action="reuse"]')?.addEventListener("click", () => {
-      els.prompt.value = item.prompt || "";
-      selectedReferenceIds.clear();
-      renderReferences();
-      syncSummary();
+      applyGalleryItemToPrompt(item, false);
     });
     card.querySelector('[data-card-action="reuse-with-references"]')?.addEventListener("click", () => {
-      els.prompt.value = item.prompt || "";
-      reuseItemReferences(item);
-      syncSummary();
+      applyGalleryItemToPrompt(item, true);
     });
     card.querySelector('[data-card-action="details"]')?.addEventListener("click", () => {
       alert(item.error || "生成失败");
@@ -3487,6 +3619,7 @@ async function refreshModels({ silent = false } = {}) {
     const textModels = cleanTextModelList(Array.isArray(data.text_models) ? data.text_models : allModels);
     verifiedImageModels = imageModels;
     verifiedTextModels = textModels;
+    if (textModels.length && els.reuseTextApiKey) els.reuseTextApiKey.checked = true;
     replaceModelOptions(imageModels);
     replaceTextModelOptions(textModels);
     renderAvailableModels();
@@ -3515,6 +3648,60 @@ async function refreshModels({ silent = false } = {}) {
     if (requestId === modelRequestId) {
       els.refreshModels.disabled = false;
     }
+  }
+}
+
+async function refreshTextModelsOnly({ silent = false } = {}) {
+  const apiUrl = selectedTextApiUrl();
+  const apiKey = selectedTextApiKey();
+  if (!apiUrl && !debugTextRouteActive()) {
+    setModelStatus("请先填写文本模型 API URL", "error");
+    if (!silent) els.textApiUrl?.focus();
+    return;
+  }
+  if (!apiKey && !debugTextRouteActive()) {
+    setModelStatus("请先填写文本模型 API Key", "error");
+    syncTextApiKeyStatus("未配置文本 Key");
+    if (!silent) els.textApiKey?.focus();
+    return;
+  }
+  saveTextApiPreference();
+  const requestId = ++modelRequestId;
+  setModelStatus("↻ 正在读取文本模型...", "loading");
+  syncTextApiKeyStatus("正在验证文本 Key...");
+  try {
+    const data = await api("/api/models", {
+      method: "POST",
+      body: JSON.stringify({
+        connection_mode: els.connectionMode.value,
+        api_url: apiUrl,
+        api_key: apiKey,
+        model_kind: "text",
+      }),
+    });
+    if (requestId !== modelRequestId) return;
+    const allModels = Array.isArray(data.models) ? data.models : [];
+    const textModels = cleanTextModelList(Array.isArray(data.text_models) ? data.text_models : allModels);
+    verifiedTextModels = textModels;
+    if (textModels.length && els.reuseTextApiKey) els.reuseTextApiKey.checked = false;
+    replaceTextModelOptions(textModels);
+    const selected = selectedTextModel();
+    if (selected) localStorage.setItem(SELECTED_TEXT_MODEL_KEY, selected);
+    if (!textModels.length) {
+      setModelStatus("文本 Key 有效，但没有识别到文本模型", "error");
+      syncTextApiKeyStatus("文本 Key 已配置，未返回文本模型");
+      return;
+    }
+    setModelStatus(`✓ 已读取 ${textModels.length} 个文本模型 · ${formatModelTime()}`, "success");
+    syncTextApiKeyStatus("文本 Key 已配置");
+  } catch (err) {
+    if (requestId !== modelRequestId) return;
+    verifiedTextModels = [];
+    replaceTextModelOptions([]);
+    setModelStatus(`✕ 文本模型读取失败：${err.message}`, "error");
+    syncTextApiKeyStatus("文本 Key 验证失败");
+  } finally {
+    // No button state to restore; text model refresh is driven by debounced inputs.
   }
 }
 
@@ -3568,7 +3755,7 @@ async function uploadReference() {
 async function clearMedia() {
   const activeJob = currentHistoryJob();
   if (activeJob) {
-    const title = activeJob.title || activeJob.prompt || "未命名任务";
+    const title = displayJobTitle(activeJob);
     if (!confirm(`删除当前任务记录？\n\n${title}\n\n会同时从工作台移除该任务生成的图片记录。`)) return;
     await api("/api/media/delete", {
       method: "POST",
@@ -5658,6 +5845,10 @@ function initResearchCanvasEngine() {
   canvas.addEventListener("pointercancel", finishPointerAction);
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.mediaPreviewModal?.classList.contains("hidden")) {
+      setMediaPreview(false);
+      return;
+    }
     if (event.code !== "Space" || document.activeElement?.matches("input, textarea, select")) return;
     researchCanvasState.spaceDown = true;
     canvas.classList.add("is-panning");
@@ -5858,6 +6049,18 @@ document.addEventListener("click", (event) => {
 els.showAllMedia?.addEventListener("click", () => {
   window.showAllGenerated?.();
 });
+els.closeMediaPreview?.addEventListener("click", () => setMediaPreview(false));
+els.mediaPreviewModal?.addEventListener("click", (event) => {
+  if (event.target === els.mediaPreviewModal) setMediaPreview(false);
+});
+els.mediaPreviewReuse?.addEventListener("click", () => {
+  applyGalleryItemToPrompt(activeMediaPreviewItem, false);
+  setMediaPreview(false);
+});
+els.mediaPreviewReuseRefs?.addEventListener("click", () => {
+  applyGalleryItemToPrompt(activeMediaPreviewItem, true);
+  setMediaPreview(false);
+});
 els.newTask.addEventListener("click", () => {
   selectedHistoryJobId = NEW_TASK_DRAFT_ID;
   selectedHistoryDayKey = null;
@@ -5875,8 +6078,16 @@ els.apiUrl.addEventListener("input", () => {
   syncTextModelFields();
   scheduleAutoRefreshModels();
 });
-els.reuseTextApiUrl?.addEventListener("change", syncTextModelFields);
-els.reuseTextApiKey?.addEventListener("change", syncTextModelFields);
+els.reuseTextApiUrl?.addEventListener("change", () => {
+  syncTextModelFields();
+  scheduleTextModelRefresh({ immediate: true });
+});
+els.reuseTextApiKey?.addEventListener("change", () => {
+  syncTextModelFields();
+  scheduleTextModelRefresh({ immediate: true });
+});
+els.textApiUrl?.addEventListener("input", scheduleTextModelRefresh);
+els.textApiKey?.addEventListener("input", scheduleTextModelRefresh);
 els.rememberApiKey.addEventListener("change", saveApiKeyPreference);
 els.poolLoginButton?.addEventListener("click", loginPoolUser);
 els.poolLogoutButton?.addEventListener("click", logoutPoolUser);
@@ -5919,6 +6130,9 @@ els.applyOptimizedParams?.addEventListener("click", applyRecommendedParams);
 els.continueOriginalPrompt?.addEventListener("click", continueOriginalPrompt);
 els.copyOptimizedPrompt?.addEventListener("click", copyOptimizedPrompt);
 els.preflightRunAi?.addEventListener("click", runPreflightAiAnalysis);
+els.sendOptimize?.addEventListener("change", () => {
+  localStorage.setItem(SEND_OPTIMIZE_KEY, els.sendOptimize.checked ? "1" : "0");
+});
 els.stopAutoGenerate?.addEventListener("click", stopPreflight);
 els.agentEntry.addEventListener("click", () => setAgentPanel(true));
 els.agentClearButton?.addEventListener("click", disableSelectedAgent);
@@ -5956,6 +6170,7 @@ els.analysisModel?.addEventListener("change", () => {
 els.manualTextModel?.addEventListener("input", () => {
   localStorage.setItem(MANUAL_TEXT_MODEL_KEY, els.manualTextModel.value.trim());
   syncResearchTextModelOptions(verifiedTextModels);
+  scheduleTextModelRefresh();
 });
 els.researchTextModel?.addEventListener("change", () => {
   const value = els.researchTextModel.value;

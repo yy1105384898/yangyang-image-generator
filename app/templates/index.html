@@ -652,7 +652,7 @@
             <span id="protocolSummary">兼容协议 · 1024x1024</span>
             <span id="countSummary">1张 · 1:1 · 1K</span>
             <label class="composer-auto-toggle">
-              <input id="sendOptimize" type="checkbox" checked>
+              <input id="sendOptimize" type="checkbox">
               <span>发送前优化</span>
             </label>
             <span id="referenceSendSummary" class="reference-send-summary hidden">将发送参考图 0/0</span>
@@ -770,6 +770,9 @@
                 <span>文本模型 API Key</span>
                 <input id="textApiKey" type="password" placeholder="填写有 GPT 文本模型权限的 Key">
               </label>
+              <div class="manual-text-model-actions">
+                <span id="textApiKeyStatus">未配置文本 Key</span>
+              </div>
             </div>
             <div class="inline-note muted"><span>ⓘ</span><span>Agent 优先用 GPT 生成三套方案；未配置文本 Key 或调用失败时使用本地模板兜底。</span></div>
             <div class="local-save-note"><span>▣</span><span>生成图片和历史仅保存到当前浏览器本地，服务端只做无状态协议转发。</span></div>
@@ -858,6 +861,33 @@
       </aside>
     </div>
   </section>
+
+  <div id="mediaPreviewModal" class="media-preview-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mediaPreviewTitle">
+    <section class="media-preview-panel">
+      <header class="media-preview-head">
+        <div>
+          <strong id="mediaPreviewTitle">图片预览</strong>
+          <span id="mediaPreviewMeta">生成记录</span>
+        </div>
+        <button class="icon-button" id="closeMediaPreview" type="button" aria-label="关闭图片预览">×</button>
+      </header>
+      <div class="media-preview-content">
+        <div class="media-preview-image-wrap">
+          <img id="mediaPreviewImage" alt="">
+        </div>
+        <aside class="media-preview-info">
+          <div id="mediaPreviewAgent" class="image-agent-tag hidden"></div>
+          <p id="mediaPreviewPrompt"></p>
+          <div class="media-preview-actions">
+            <a id="mediaPreviewOpen" href="#" target="_blank" rel="noopener">打开</a>
+            <a id="mediaPreviewDownload" href="#" download>下载</a>
+            <button id="mediaPreviewReuse" type="button">复用</button>
+            <button id="mediaPreviewReuseRefs" type="button">参考</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </div>
 
   <div id="agentModal" class="agent-modal hidden" role="dialog" aria-modal="true" aria-labelledby="agentPanelTitle">
     <section class="agent-panel">
