@@ -1187,16 +1187,22 @@ body.research-active .studio-view {
   border-color: #77aee8;
   box-shadow: 0 0 0 2px rgba(37,99,235,.15), 0 16px 38px rgba(17,17,17,.08);
 }
-.image-card > img {
-  display: block;
+.image-preview-frame {
+  overflow: hidden;
   width: 100%;
   aspect-ratio: 1 / 1;
-  object-fit: cover;
   background: var(--surface-soft);
+}
+.image-preview-frame > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .failed-preview {
   display: grid;
-  aspect-ratio: 1 / 1;
+  width: 100%;
+  height: 100%;
   place-items: center;
   align-content: center;
   gap: 18px;

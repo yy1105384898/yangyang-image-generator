@@ -2965,8 +2965,8 @@ function renderMedia() {
     const card = document.createElement("article");
     card.className = `image-card ${item.status} ${selected ? "selected" : ""}`;
     const preview = item.url
-      ? `<img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.prompt)}" loading="lazy">`
-      : `<div class="failed-preview"><span>!</span><strong>生成失败</strong><div><button type="button" data-card-action="retry">重试</button><button type="button" data-card-action="details">详情</button></div></div>`;
+      ? `<div class="image-preview-frame"><img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.prompt)}" loading="lazy"></div>`
+      : `<div class="image-preview-frame"><div class="failed-preview"><span>!</span><strong>生成失败</strong><div><button type="button" data-card-action="retry">重试</button><button type="button" data-card-action="details">详情</button></div></div></div>`;
     const referenceStrip = item.references?.length ? `
         <button class="image-reference-pill" type="button" data-card-action="reuse-references" title="复用这次使用的参考图">
           <span class="image-reference-stack">${item.references.slice(0, 3).map((ref, index) => `<img src="${escapeAttr(ref.url)}" alt="" style="--i:${index}">`).join("")}</span>
