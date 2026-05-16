@@ -93,6 +93,7 @@ const els = {
   preflightSeconds: $("#preflightSeconds"),
   preflightText: $("#preflightText"),
   preflightProgress: $("#preflightProgress"),
+  preflightRunAi: $("#preflightRunAi"),
   stopAutoGenerate: $("#stopAutoGenerate"),
   promptScore: $("#promptScore"),
   analysisAspect: $("#analysisAspect"),
@@ -114,6 +115,7 @@ const els = {
   toggleConfig: $("#toggleConfig"),
   configPanel: $("#configPanel"),
   collapseRight: $("#collapseRight"),
+  mobileShellBackdrop: $("#mobileShellBackdrop"),
   agentEntry: $("#agentEntry"),
   agentClearButton: $("#agentClearButton"),
   agentAppliedStatus: $("#agentAppliedStatus"),
@@ -3180,11 +3182,20 @@ function setPreflightActionMode(active = false) {
   }
 }
 
+function isPreflightAwaitingAction() {
+  return Boolean(
+    preflightOriginalPrompt &&
+    els.promptAnalysisCard &&
+    !els.promptAnalysisCard.classList.contains("hidden")
+  );
+}
+
 function stopPreflight() {
   preflightCancelled = true;
   preflightAnalysisInFlight = false;
   window.clearInterval(preflightTimer);
   preflightTimer = 0;
+  preflightOriginalPrompt = "";
   if (els.submitJob) {
     els.submitJob.disabled = false;
     els.submitJob.textContent = "➤";
@@ -3192,7 +3203,7 @@ function stopPreflight() {
   if (els.preflightGenerate && !els.preflightGenerate.classList.contains("hidden")) {
     els.preflightGenerate.classList.add("paused");
     if (els.preflightSeconds) els.preflightSeconds.textContent = "0";
-    if (els.preflightText) els.preflightText.textContent = "已停止自动生成，可手动应用优化版或原样继续";
+    if (els.preflightText) els.preflightText.textContent = "已取消本次发送，可继续编辑后重新发送";
     if (els.preflightProgress) els.preflightProgress.style.width = "0%";
   } else {
     els.preflightGenerate?.classList.add("hidden");
@@ -3231,7 +3242,7 @@ function startPreflightCountdown() {
   const total = remaining;
   const agentName = selectedAgent ? `${selectedAgent.name} · ${variantLabel(appliedAgentVariant || "stable")}` : "优化版";
   const tick = () => {
-    els.preflightSeconds.textContent = String(remaining);
+    els.preflightSeconds.textContent = `${remaining}s`;
     els.preflightText.textContent = `${remaining} 秒后使用 ${agentName} 自动生成`;
     els.preflightProgress.style.width = `${Math.max(0, Math.min(100, ((total - remaining) / total) * 100))}%`;
     if (remaining <= 0) {
@@ -3246,42 +3257,74 @@ function startPreflightCountdown() {
   preflightTimer = window.setInterval(tick, 1000);
 }
 
+async function runPreflightAiAnalysis() {
+  if (preflightAnalysisInFlight || !isPreflightAwaitingAction()) return;
+  const textModel = selectedTextModel();
+  if (!textModel) {
+    setAnalysisReady("未配置文本模型", "右侧 Agent 文本模型未接入，当前只能使用本地预检结果。");
+    flashButton(els.preflightRunAi, "未配置文本模型");
+    return;
+  }
+  preflightCancelled = false;
+  preflightAnalysisInFlight = true;
+  const originalButtonText = els.preflightRunAi?.textContent || "AI 分析";
+  if (els.preflightRunAi) {
+    els.preflightRunAi.disabled = true;
+    els.preflightRunAi.textContent = "分析中...";
+  }
+  if (els.submitJob) {
+    els.submitJob.disabled = true;
+    els.submitJob.textContent = "AI";
+  }
+  els.analysisResultTitle.textContent = "正在调用文本 AI 预检";
+  setAnalysisReady("GPT 分析模型", `正在使用 ${selectedTextModelLabel()} 优化提示词和参数，完成后由你手动确认是否生成。`);
+    if (els.preflightSeconds) els.preflightSeconds.textContent = "AI";
+  if (els.preflightText) els.preflightText.textContent = `正在使用 ${selectedTextModelLabel()} 做发送前优化...`;
+  if (els.preflightProgress) els.preflightProgress.style.width = "45%";
+  try {
+    const plan = await requestPromptAnalysis("preflight");
+    if (preflightCancelled) return;
+    showTextAiAnalysis(plan, preflightOriginalPrompt, "preflight");
+    setPreflightActionMode(true);
+    els.preflightGenerate?.classList.add("hidden");
+    if (els.preflightProgress) els.preflightProgress.style.width = "0%";
+  } catch (err) {
+    if (preflightCancelled) return;
+    showPromptAnalysis("preflight");
+    setPreflightActionMode(true);
+    setAnalysisReady("本地规则预检", `文本 AI 调用失败，已保留本地规则结果：${err.message}`);
+    if (els.preflightSeconds) els.preflightSeconds.textContent = "失败";
+    if (els.preflightText) els.preflightText.textContent = "AI 分析失败，已保留本地预检，可继续手动生成。";
+    if (els.preflightProgress) els.preflightProgress.style.width = "0%";
+  } finally {
+    preflightAnalysisInFlight = false;
+    if (els.preflightRunAi) {
+      els.preflightRunAi.disabled = false;
+      els.preflightRunAi.textContent = originalButtonText;
+    }
+    if (els.submitJob) {
+      els.submitJob.disabled = false;
+      els.submitJob.textContent = "➤";
+    }
+  }
+}
+
 async function showPreflightGenerate() {
   if (preflightTimer || submitInFlight || preflightAnalysisInFlight) return;
   preflightCancelled = false;
   preflightOriginalPrompt = els.prompt.value.trim();
   agentModePlan = null;
   showPromptAnalysis("preflight");
-  els.analysisResultTitle.textContent = "已完成预检";
-  const textModel = selectedTextModel();
+  els.analysisResultTitle.textContent = "发送前预检完成";
   els.preflightGenerate?.classList.remove("hidden");
   els.preflightGenerate?.classList.remove("paused");
-  if (textModel) {
-    preflightAnalysisInFlight = true;
-    els.submitJob.disabled = true;
-    els.submitJob.textContent = "AI";
-    setPreflightActionMode(false);
-    els.analysisResultTitle.textContent = "正在调用文本 AI 预检";
-    setAnalysisReady("GPT 分析模型", `正在使用 ${selectedTextModelLabel()} 优化提示词和参数，完成后再进入自动生成倒计时。`);
-    if (els.preflightSeconds) els.preflightSeconds.textContent = "AI";
-    if (els.preflightText) els.preflightText.textContent = `正在使用 ${selectedTextModelLabel()} 做发送前优化...`;
-    if (els.preflightProgress) els.preflightProgress.style.width = "18%";
-    try {
-      const plan = await requestPromptAnalysis("preflight");
-      if (preflightCancelled) return;
-      showTextAiAnalysis(plan, preflightOriginalPrompt, "preflight");
-    } catch (err) {
-      if (preflightCancelled) return;
-      showPromptAnalysis("preflight");
-      setAnalysisReady("本地规则预检", `文本 AI 调用失败，已使用本地规则兜底：${err.message}`);
-    } finally {
-      preflightAnalysisInFlight = false;
-      els.submitJob.disabled = false;
-      els.submitJob.textContent = "➤";
-    }
-  }
+  setPreflightActionMode(true);
+  if (els.preflightSeconds) els.preflightSeconds.textContent = "待确认";
+  if (els.preflightText) els.preflightText.textContent = selectedTextModel()
+    ? "已完成本地预检；可点 AI 分析深度优化，或直接选择生成方式。"
+    : "已完成本地预检；未配置文本模型，可直接选择生成方式。";
+  if (els.preflightProgress) els.preflightProgress.style.width = "100%";
   if (preflightCancelled) return;
-  startPreflightCountdown();
 }
 
 async function submitJob() {
@@ -3804,7 +3847,7 @@ function closePromptAnalysis() {
 
 function applyOptimizedPrompt() {
   if (!els.optimizedPrompt?.value.trim()) return;
-  if (preflightTimer) {
+  if (preflightTimer || isPreflightAwaitingAction()) {
     const text = els.optimizedPrompt.value.trim();
     stopPreflight();
     performSubmitJob(text);
@@ -5782,6 +5825,7 @@ els.applyOptimizedPrompt?.addEventListener("click", applyOptimizedPrompt);
 els.applyOptimizedParams?.addEventListener("click", applyRecommendedParams);
 els.continueOriginalPrompt?.addEventListener("click", continueOriginalPrompt);
 els.copyOptimizedPrompt?.addEventListener("click", copyOptimizedPrompt);
+els.preflightRunAi?.addEventListener("click", runPreflightAiAnalysis);
 els.stopAutoGenerate?.addEventListener("click", stopPreflight);
 els.agentEntry.addEventListener("click", () => setAgentPanel(true));
 els.agentClearButton?.addEventListener("click", disableSelectedAgent);
@@ -5865,9 +5909,20 @@ els.nextGuide.addEventListener("click", () => {
 function syncShellToggles() {
   els.toggleLeft?.classList.toggle("active", els.appShell?.classList.contains("left-open"));
   els.toggleConfig?.classList.toggle("active", els.appShell?.classList.contains("settings-open"));
+  if (els.mobileShellBackdrop) {
+    const isMobile = window.matchMedia("(max-width: 780px)").matches;
+    const showBackdrop = isMobile && (
+      els.appShell?.classList.contains("left-open") ||
+      els.appShell?.classList.contains("settings-open")
+    );
+    els.mobileShellBackdrop.hidden = !showBackdrop;
+  }
 }
 
 els.toggleLeft.addEventListener("click", () => {
+  if (window.matchMedia("(max-width: 780px)").matches) {
+    els.appShell.classList.remove("settings-open");
+  }
   els.appShell.classList.toggle("left-open");
   syncShellToggles();
 });
@@ -5876,11 +5931,19 @@ els.collapseLeft.addEventListener("click", () => {
   syncShellToggles();
 });
 els.toggleConfig.addEventListener("click", () => {
+  if (window.matchMedia("(max-width: 780px)").matches) {
+    els.appShell.classList.remove("left-open");
+  }
   els.appShell.classList.toggle("settings-open");
   syncShellToggles();
 });
 els.collapseRight.addEventListener("click", () => {
   els.appShell.classList.toggle("settings-open");
+  syncShellToggles();
+});
+els.mobileShellBackdrop?.addEventListener("click", () => {
+  els.appShell?.classList.remove("left-open");
+  els.appShell?.classList.remove("settings-open");
   syncShellToggles();
 });
 document.querySelectorAll('a[href^="#"]').forEach((link) => {

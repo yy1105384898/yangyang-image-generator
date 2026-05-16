@@ -468,6 +468,7 @@
 
     <section id="studio" class="studio-view">
     <div class="app-shell left-open settings-open">
+      <div class="mobile-shell-backdrop" id="mobileShellBackdrop" hidden></div>
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-main">
@@ -573,11 +574,14 @@
             </div>
             <div class="preflight-generate hidden" id="preflightGenerate">
               <div class="preflight-copy">
-                <strong><span id="preflightSeconds">10</span>s</strong>
+                <strong><span id="preflightSeconds">10s</span></strong>
                 <span id="preflightText">10 秒后使用优化版自动生成</span>
               </div>
               <div class="preflight-track"><span id="preflightProgress"></span></div>
-              <button id="stopAutoGenerate" type="button">停止自动生成</button>
+              <div class="preflight-actions">
+                <button id="preflightRunAi" class="primary-action compact" type="button">AI 分析</button>
+                <button id="stopAutoGenerate" type="button">取消发送</button>
+              </div>
             </div>
             <div class="analysis-block">
               <strong>失败预判</strong>

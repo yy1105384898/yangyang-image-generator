@@ -1873,7 +1873,13 @@ body.research-active .studio-view {
   background: var(--green);
   transition: width .3s ease;
 }
+.preflight-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .preflight-generate button {
+  flex: 1 1 140px;
   min-height: 48px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -6821,5 +6827,366 @@ body.research-active .research-workbench {
     right: 50%;
     bottom: -1px;
     transform: translateX(50%) rotate(135deg);
+  }
+}
+
+.mobile-shell-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  background: rgba(15, 18, 16, .42);
+  backdrop-filter: blur(3px);
+}
+
+@media (max-width: 780px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  .app-shell {
+    width: 100%;
+    min-height: 100dvh;
+    height: 100dvh;
+  }
+
+  .workspace {
+    grid-column: 1;
+    min-height: 100dvh;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .topbar-cluster {
+    gap: 4px;
+  }
+
+  .topbar-home-button {
+    padding: 0 8px;
+  }
+
+  .sidebar,
+  .settings-panel {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 26;
+    width: min(88vw, 360px);
+    max-width: 360px;
+    overflow: auto;
+    transition: transform .18s ease;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar {
+    left: 0;
+    display: flex;
+    border-width: 0 1px 0 0;
+    box-shadow: 22px 0 40px rgba(17,17,17,.14);
+    transform: translateX(-102%);
+  }
+
+  .app-shell.left-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .settings-panel {
+    right: 0;
+    left: auto;
+    grid-column: auto;
+    width: min(92vw, 380px);
+    padding: 0 10px 18px;
+    border-width: 0 0 0 1px;
+    box-shadow: -22px 0 40px rgba(17,17,17,.14);
+    transform: translateX(102%);
+  }
+
+  .app-shell.settings-open .settings-panel {
+    transform: translateX(0);
+  }
+
+  .app-shell:not(.left-open) .sidebar,
+  .app-shell:not(.settings-open) .settings-panel {
+    display: flex;
+  }
+
+  .panel-header {
+    padding-top: max(10px, env(safe-area-inset-top, 0px));
+  }
+
+  .canvas {
+    padding: 10px 10px 176px;
+    min-height: calc(100dvh - 56px);
+  }
+
+  .gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .gallery-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .gallery-bulk-actions {
+    justify-content: flex-start;
+  }
+
+  .empty-state {
+    top: 28px;
+    width: calc(100% - 12px);
+    transform: translateX(-50%);
+  }
+
+  .composer {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    width: auto;
+    transform: none;
+    z-index: 18;
+  }
+
+  .agent-mode-strip {
+    min-height: 58px;
+    padding: 10px 12px;
+  }
+
+  .agent-mode-strip span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .agent-quickbar {
+    align-items: stretch;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .agent-quickbar > .agent-entry-button,
+  .agent-quickbar > #expandAdvanced,
+  .agent-quickbar > .agent-clear-button,
+  .agent-quickbar > .agent-applied-status,
+  .agent-quickbar > .agent-status-bubble {
+    min-width: 0;
+  }
+
+  .agent-status-bubble {
+    width: 100%;
+    order: 10;
+  }
+
+  .composer-main,
+  .composer.has-prompt .composer-main,
+  .composer.agent-applied .composer-main,
+  .composer.agent-mode-enabled .composer-main {
+    grid-template-columns: 40px minmax(72px, max-content) minmax(0, 1fr) 42px;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 16px;
+  }
+
+  .preset-button {
+    max-width: none;
+    justify-content: center;
+  }
+
+  .composer-main textarea,
+  .composer.has-prompt .composer-main textarea,
+  .composer.agent-applied .composer-main textarea,
+  .composer.agent-mode-enabled .composer-main textarea {
+    min-height: 64px;
+    height: 64px;
+    max-height: 132px;
+    padding: 12px;
+    font-size: 15px;
+    line-height: 1.45;
+  }
+
+  .quick-config-button,
+  .send-button,
+  .clear-prompt-button,
+  .upload-button,
+  .preset-button {
+    min-height: 40px;
+  }
+
+  .composer-tools {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .composer-tools button {
+    min-height: 36px;
+  }
+
+  .composer-meta {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .quick-config-panel {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .quick-config-grid,
+  .analysis-param-grid,
+  .settings-grid,
+  .analysis-grid,
+  .agent-form-grid,
+  .agent-variant-grid,
+  .compact-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .research-workbench {
+    width: 100%;
+    min-height: 100dvh;
+    height: auto;
+    padding: 12px 12px 84px;
+    overflow: visible;
+  }
+
+  .research-head {
+    position: sticky;
+    top: 10px;
+    z-index: 8;
+  }
+
+  .research-layout,
+  .research-workbench.left-collapsed .research-layout,
+  .research-workbench.right-collapsed .research-layout,
+  .research-workbench.left-collapsed.right-collapsed .research-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+
+  .research-panel,
+  .research-canvas-card,
+  .research-tools {
+    min-width: 0;
+  }
+
+  .research-panel,
+  .research-tools {
+    overflow: visible;
+  }
+
+  .research-canvas-card {
+    order: -1;
+    min-height: 420px;
+  }
+
+  .research-editor-toolbar {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .research-toolbar-left,
+  .research-toolbar-right {
+    width: 100%;
+  }
+
+  .research-toolbar-left,
+  .research-toolbar-right,
+  .research-head-nav,
+  .research-head-actions {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+  }
+
+  .research-field-grid,
+  .research-button-row,
+  .research-control-upload,
+  .research-node-grid,
+  .research-tool-grid.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .research-tool-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .research-node-grid label,
+  .research-field-grid label {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .empty-state {
+    grid-template-columns: 1fr;
+    top: 18px;
+    padding: 14px;
+  }
+
+  .empty-mark {
+    width: 38px;
+    height: 38px;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .topbar-cluster.right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .composer {
+    left: 8px;
+    right: 8px;
+  }
+
+  .composer-main,
+  .composer.has-prompt .composer-main,
+  .composer.agent-applied .composer-main,
+  .composer.agent-mode-enabled .composer-main {
+    grid-template-columns: 40px minmax(0, 1fr) 42px 40px;
+  }
+
+  .preset-button {
+    grid-column: 2 / -1;
+    grid-row: 1;
+  }
+
+  .quick-config-button {
+    grid-column: 1 / 3;
+  }
+
+  .composer-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-list {
+    grid-template-columns: 1fr;
+  }
+
+  .research-head {
+    top: 8px;
+    padding: 10px;
+  }
+
+  .research-head h2 {
+    font-size: 22px;
   }
 }
