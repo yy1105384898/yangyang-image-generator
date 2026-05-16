@@ -3128,6 +3128,9 @@ function renderMedia() {
   if (!items.length) return;
   for (const item of items) {
     const selected = selectedGalleryIds.has(item.id);
+    const agentLabel = item.agentName
+      ? `✣ ${escapeHtml(item.agentName)} ${item.agentVariant ? variantLabel(item.agentVariant) : ""}`
+      : "✣ 通用生图";
     const card = document.createElement("article");
     card.className = `image-card ${item.status} ${selected ? "selected" : ""}`;
     const preview = item.url
@@ -3149,7 +3152,7 @@ function renderMedia() {
           ${item.actual_size ? `<span>实际 ${escapeHtml(item.actual_size)}</span>` : ""}
           ${item.quality && item.quality !== "auto" ? `<span>${escapeHtml(item.quality)}</span>` : ""}
         </div>
-        ${item.agentName ? `<div class="image-agent-tag">✣ ${escapeHtml(item.agentName)} ${item.agentVariant ? variantLabel(item.agentVariant) : ""}</div>` : ""}
+        <div class="image-agent-tag">${agentLabel}</div>
         ${item.status === "error" ? `<div class="image-error">${escapeHtml(item.error || "生成失败")}</div>` : ""}
         <p>${escapeHtml(item.prompt || "暂无提示词")}</p>
         <div class="image-actions">
