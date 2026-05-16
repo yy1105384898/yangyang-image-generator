@@ -2691,6 +2691,51 @@ def normalize_agent_mode_plan(plan: dict, fallback_prompt: str) -> dict:
     }
 
 
+def cjk_char_count(value: str) -> int:
+    return len(re.findall(r"[\u4e00-\u9fff]", str(value or "")))
+
+
+def english_word_count(value: str) -> int:
+    return len(re.findall(r"\b[A-Za-z][A-Za-z\-]{2,}\b", str(value or "")))
+
+
+def is_english_heavy_prompt(value: str) -> bool:
+    text = str(value or "")
+    if not text.strip():
+        return False
+    letters = len(re.findall(r"[A-Za-z]", text))
+    cjk = cjk_char_count(text)
+    words = english_word_count(text)
+    return words >= 12 and letters > max(80, cjk * 2)
+
+
+def build_prompt_analysis_fallback_prompt(payload: dict, plan: dict | None = None) -> str:
+    base = str(payload.get("prompt") or "").strip()
+    mode = str(payload.get("mode") or "optimize").strip().lower()
+    references = payload.get("references") if isinstance(payload.get("references"), list) else []
+    negative = str((plan or {}).get("negative") or payload.get("negative") or "").strip()
+    lines = []
+    if base:
+        lines.append(base)
+    supplements = []
+    if references:
+        supplements.append("保留参考图的主体数量、人物身份特征、动作关系、构图比例、光影方向和主要色彩，不凭空增加参考图中不存在的人物、文字、Logo 或品牌元素。")
+    if mode == "failure":
+        supplements.append("风险规避：重点检查手部、手指数量、肢体比例、面部结构、烟雾与背景融合、主体一致性和画面清晰度，避免畸形、错位、重复肢体、低质感和过度锐化。")
+    elif mode == "params":
+        supplements.append("参数建议：保持当前主体和场景不变，优先使用当前比例与尺寸；如需更稳，减少张数并加强负面提示词约束。")
+    elif mode == "style":
+        supplements.append("风格增强：在不改变主体、人数、动作和场景的前提下，增强真实摄影质感、自然光影、材质细节、空间层次和成片清晰度。")
+    else:
+        supplements.append("优化补充：保持原始主题、人物数量、动作和场景不变，补充构图、光线、材质、清晰度和负面控制，输出可直接生图的中文提示词。")
+    if negative:
+        supplements.append(f"负面控制：{negative}")
+    else:
+        supplements.append("负面控制：低清晰度、肢体畸形、手指错误、面部崩坏、主体变形、错别字、多余人物、多余手臂、过度锐化、AI 伪影。")
+    lines.append("\n".join(supplements))
+    return "\n\n".join(item for item in lines if item).strip()
+
+
 def normalize_prompt_analysis_plan(plan: dict, payload: dict) -> dict:
     if not isinstance(plan, dict):
         raise ValueError("prompt analysis must be an object")
@@ -2698,11 +2743,13 @@ def normalize_prompt_analysis_plan(plan: dict, payload: dict) -> dict:
     prompt = str(plan.get("prompt") or fallback_prompt or "").strip()
     if not prompt:
         raise ValueError("prompt analysis missing prompt")
-    if fallback_prompt and fallback_prompt not in prompt:
-        prompt = f"{fallback_prompt}\n\n优化补充：{prompt}"
     mode = str(payload.get("mode") or plan.get("mode") or "optimize").strip().lower()
     if mode not in {"preflight", "optimize", "params", "failure", "style"}:
         mode = "optimize"
+    if fallback_prompt and fallback_prompt not in prompt:
+        prompt = f"{fallback_prompt}\n\n优化补充：{prompt}"
+    if is_english_heavy_prompt(prompt):
+        prompt = build_prompt_analysis_fallback_prompt(payload, plan)
     aspect_ratio = str(plan.get("aspect_ratio") or payload.get("aspect_ratio") or "").strip()
     if aspect_ratio not in {"1:1", "4:5", "5:4", "3:4", "4:3", "2:3", "3:2", "16:9", "9:16", "21:9", "1:4", "8:1", "1:8"}:
         aspect_ratio = str(payload.get("aspect_ratio") or "").strip()
@@ -2726,7 +2773,6 @@ def normalize_prompt_analysis_plan(plan: dict, payload: dict) -> dict:
         "notes": [str(item or "").strip() for item in notes if str(item or "").strip()][:8],
     }
 
-
 def build_prompt_analysis_messages(payload: dict) -> list[dict]:
     prompt = str(payload.get("prompt") or "").strip()
     mode = str(payload.get("mode") or "optimize").strip().lower()
@@ -2736,8 +2782,9 @@ def build_prompt_analysis_messages(payload: dict) -> list[dict]:
             "role": "system",
             "content": (
                 "你是生图发送前风险预判与提示词优化助手。只输出严格 JSON object，不要 Markdown。"
+                "所有字段必须使用简体中文，尤其 prompt、brief、risks、steps、notes、negative 禁止输出英文句子；只允许保留 8K、AI、Logo、JPEG 这类必要术语。"
                 "必须围绕用户当前输入做风险识别和规避优化，不能把任务改写成无关的新任务。"
-                "如果是 failure 模式，先判断可能失败的原因，再给出规避这些风险后的优化提示词。"
+                "如果是 failure 模式，先判断可能失败的原因，再给出规避这些风险后的中文优化提示词。"
                 "参考图只作为约束摘要，不要凭空编造参考图中不存在的文字、Logo、品牌或主体。"
             ),
         },
@@ -2746,18 +2793,19 @@ def build_prompt_analysis_messages(payload: dict) -> list[dict]:
             "content": json.dumps({
                 "mode": mode,
                 "output_schema": {
-                    "brief": "string: 对当前任务的简短理解",
-                    "risks": ["string: 具体风险点"],
-                    "steps": ["string: 对应规避策略"],
-                    "prompt": "string: 基于风险规避后的可直接生图提示词",
+                    "brief": "string: 对当前任务的简短理解，必须中文",
+                    "risks": ["string: 具体风险点，必须中文"],
+                    "steps": ["string: 对应规避策略，必须中文"],
+                    "prompt": "string: 基于风险规避后的可直接生图提示词，必须中文",
                     "aspect_ratio": "string",
                     "count": "number",
-                    "negative": "string",
-                    "notes": ["string"],
+                    "negative": "string: 中文负面提示词",
+                    "notes": ["string: 中文注意事项"],
                 },
                 "requirements": [
                     "不得引入 user_prompt 没有提到的核心文字、品牌、人名或物体。",
-                    "如果有参考图，只说明保留参考图主体/构图/光影/色彩等约束；不要猜测参考图具体文字内容。",
+                    "prompt 必须是中文生图提示词，不要写英文段落，不要中英混写。",
+                    "如果有参考图，只说明保留参考图主体、构图、光影、色彩等约束；不要猜测参考图具体文字内容。",
                     "failure 模式必须输出 risks，并在 prompt 中加入规避错误文字、低清晰度、主体变形、过度锐化等风险的约束。",
                     "params 模式侧重比例、张数、负面提示词和质量建议，但 prompt 仍要保持当前用户意图。",
                     "style 模式可以增强风格，但不能改变用户要生成的主体和场景。",
@@ -2777,7 +2825,6 @@ def build_prompt_analysis_messages(payload: dict) -> list[dict]:
             }, ensure_ascii=False),
         },
     ]
-
 
 def build_agent_mode_messages(payload: dict) -> list[dict]:
     prompt = str(payload.get("prompt") or "").strip()

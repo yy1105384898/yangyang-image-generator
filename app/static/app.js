@@ -2428,15 +2428,36 @@ function isPromptAnalysisRelevant(source = "", result = "") {
   return matched / tokens.length >= 0.45;
 }
 
+function isEnglishHeavyPrompt(text = "") {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  const englishWords = value.match(/\b[A-Za-z][A-Za-z-]{2,}\b/g) || [];
+  const letters = value.match(/[A-Za-z]/g) || [];
+  const cjk = value.match(/[\u4e00-\u9fff]/g) || [];
+  return englishWords.length >= 12 && letters.length > Math.max(80, cjk.length * 2);
+}
+
+function localChineseAnalysisPrompt(originalPrompt = "") {
+  const base = String(originalPrompt || els.prompt.value || "").trim();
+  const parts = [];
+  if (base) parts.push(base);
+  if (selectedReferenceIds.size) {
+    parts.push("参考图约束：保留参考图的主体数量、人物身份特征、动作关系、构图比例、光影方向和主要色彩，不凭空增加参考图中不存在的人物、文字、Logo 或品牌元素。");
+  }
+  parts.push("优化补充：保持原始主题、人物数量、动作和场景不变，补充构图、光线、材质、清晰度和负面控制，输出可直接生图的中文提示词。");
+  parts.push("负面控制：低清晰度、肢体畸形、手指错误、面部崩坏、主体变形、错别字、多余人物、多余手臂、过度锐化、AI 伪影。");
+  return parts.join("\n\n");
+}
+
 function showTextAiAnalysis(plan, originalPrompt, mode = "preflight") {
   syncAnalysisModeLabels(mode);
   let prompt = String(plan?.prompt || originalPrompt || "").trim();
-  if (!isPromptAnalysisRelevant(originalPrompt, prompt)) {
-    prompt = recommendedPromptText();
+  if (!isPromptAnalysisRelevant(originalPrompt, prompt) || isEnglishHeavyPrompt(prompt)) {
+    prompt = localChineseAnalysisPrompt(originalPrompt);
     plan = {
       ...(plan || {}),
       prompt,
-      risks: ["文本模型返回内容与当前输入不匹配，已回退到本地规则优化。"],
+      risks: ["文本模型返回内容与当前输入不匹配或包含大段英文，已回退到中文本地规则优化。"],
       notes: ["请重新点击对应按钮可再次调用文本模型。"],
     };
   }
