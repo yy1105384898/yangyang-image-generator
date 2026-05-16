@@ -2289,6 +2289,12 @@ body.research-active .studio-view {
 .reference-aspect-button:disabled {
   opacity: .82;
 }
+.reference-aspect-button.off {
+  border-color: rgba(120, 128, 118, .28);
+  background: rgba(247, 248, 245, .95);
+  color: #5f665d;
+  cursor: pointer;
+}
 .composer-main textarea {
   width: 100%;
   height: 44px;

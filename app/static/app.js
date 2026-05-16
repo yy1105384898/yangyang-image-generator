@@ -185,6 +185,8 @@ let previewAgentVariant = "stable";
 let agentModePlan = null;
 let promptAnalysisPlan = null;
 let referenceAspectAutoValue = "";
+let referenceAspectAutoEnabled = true;
+let referenceAspectSyncing = false;
 let customIndustryAgents = [];
 let agentComposerExpanded = false;
 let guideStep = 0;
@@ -949,9 +951,12 @@ function applyReferenceAspectRatio({ announce = false } = {}) {
     if (announce) showReferenceLimitHint("仅选中 1 张带尺寸信息的参考图时，才能按参考图比例生成");
     return false;
   }
+  referenceAspectSyncing = true;
   els.aspectRatio.value = candidate.value;
   if (els.quickAspect) els.quickAspect.value = candidate.value;
   referenceAspectAutoValue = candidate.value;
+  referenceAspectAutoEnabled = true;
+  referenceAspectSyncing = false;
   syncSummary();
   if (announce) {
     showReferenceLimitHint(`已按参考图 ${candidate.label} 匹配为 ${candidate.value}`);
@@ -965,6 +970,7 @@ function syncReferenceAspectAuto({ announce = false } = {}) {
     referenceAspectAutoValue = "";
     return false;
   }
+  if (!referenceAspectAutoEnabled) return false;
   if (els.aspectRatio.value !== candidate.value || referenceAspectAutoValue !== candidate.value) {
     return applyReferenceAspectRatio({ announce });
   }
@@ -983,15 +989,20 @@ function syncReferenceAspectControl() {
       : "先选择 1 张参考图";
   els.matchReferenceAspect.classList.toggle("hidden", refs.length !== 1);
   els.matchReferenceAspect.disabled = !candidate;
-  els.matchReferenceAspect.textContent = candidate ? `已按参考图 · ${candidate.value}` : "按参考图比例";
+  els.matchReferenceAspect.classList.toggle("off", Boolean(candidate && !referenceAspectAutoEnabled));
+  els.matchReferenceAspect.textContent = candidate
+    ? (referenceAspectAutoEnabled ? `自适应开 · ${candidate.value}` : `自适应关 · ${candidate.value}`)
+    : "按参考图比例";
   els.matchReferenceAspect.title = candidate
-    ? `参考图 ${candidate.label}，生成比例已自适应为 ${candidate.value}`
+    ? (referenceAspectAutoEnabled
+      ? `参考图 ${candidate.label}，生成比例已自适应为 ${candidate.value}；点击可重新应用`
+      : `参考图 ${candidate.label}，点击恢复自适应为 ${candidate.value}`)
     : disabledReason;
 }
 
 function describeAspect() {
   const candidate = referenceAspectCandidate();
-  if (candidate && els.aspectRatio.value === candidate.value) {
+  if (candidate && referenceAspectAutoEnabled && els.aspectRatio.value === candidate.value) {
     return `单张参考图自适应 · 原图 ${candidate.label}`;
   }
   const labels = {
@@ -3397,6 +3408,7 @@ function renderReferences() {
       } else {
         showReferenceLimitHint();
       }
+      referenceAspectAutoEnabled = selectedReferenceIds.size === 1;
       renderReferences();
       syncSummary();
     });
@@ -3407,6 +3419,7 @@ function renderReferences() {
     syncReferenceAspectAuto({ announce: true });
   } else {
     referenceAspectAutoValue = "";
+    referenceAspectAutoEnabled = true;
   }
   if (els.referenceSendSummary) {
     els.referenceSendSummary.textContent = selectedRefs.length
@@ -6297,6 +6310,10 @@ function initResearchWorkbench() {
 els.prompt.addEventListener("input", syncSummary);
 ["change", "input"].forEach((eventName) => {
   [els.protocol, els.model, els.apiUrl, els.apiKey, els.rememberApiKey, els.aspectRatio, els.resolution, els.count, els.concurrency, els.retryLimit, els.quality, els.outputFormat, els.seed, els.negative].forEach((el) => el.addEventListener(eventName, () => {
+    if (el === els.aspectRatio && !referenceAspectSyncing && referenceAspectCandidate()) {
+      referenceAspectAutoEnabled = false;
+      referenceAspectAutoValue = "";
+    }
     if (el === els.count && eventName === "change") syncConcurrencyToCount();
     syncSummary();
   }));
@@ -6314,7 +6331,10 @@ els.clearPrompt?.addEventListener("click", () => {
 });
 els.referenceUploadButton.addEventListener("click", () => els.referenceUpload.click());
 els.referenceUpload.addEventListener("change", uploadReference);
-els.matchReferenceAspect?.addEventListener("click", () => applyReferenceAspectRatio({ announce: true }));
+els.matchReferenceAspect?.addEventListener("click", () => {
+  referenceAspectAutoEnabled = true;
+  applyReferenceAspectRatio({ announce: true });
+});
 els.clearMedia.addEventListener("click", clearMedia);
 els.toggleHistory?.addEventListener("click", () => {
   historyExpanded = !historyExpanded;
@@ -6457,11 +6477,19 @@ els.closeQuickConfig?.addEventListener("click", () => setQuickConfigPanel(false)
   [els.quickFormat, els.outputFormat],
 ].forEach(([quick, source]) => {
   quick?.addEventListener("input", () => {
+    if (quick === els.quickAspect && !referenceAspectSyncing && referenceAspectCandidate()) {
+      referenceAspectAutoEnabled = false;
+      referenceAspectAutoValue = "";
+    }
     source.value = quick.value;
     if (source === els.count) syncConcurrencyToCount();
     syncSummary();
   });
   quick?.addEventListener("change", () => {
+    if (quick === els.quickAspect && !referenceAspectSyncing && referenceAspectCandidate()) {
+      referenceAspectAutoEnabled = false;
+      referenceAspectAutoValue = "";
+    }
     source.value = quick.value;
     if (source === els.count) syncConcurrencyToCount();
     syncSummary();
