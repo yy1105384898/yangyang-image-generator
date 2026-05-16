@@ -58,6 +58,27 @@ ADMIN_AUTH_FILE = DATA_DIR / "admin_auth.json"
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-this-secret")
 
+
+def asset_version(filename: str) -> str:
+    try:
+        path = Path(app.static_folder or "") / filename
+        return str(int(path.stat().st_mtime))
+    except OSError:
+        return str(int(time.time()))
+
+
+@app.context_processor
+def inject_asset_helpers():
+    return {"asset_version": asset_version}
+
+
+@app.after_request
+def add_static_cache_headers(response):
+    if request.path.startswith(f"{app.static_url_path}/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 state_lock = threading.RLock()
 job_queue: "queue.Queue[str]" = queue.Queue()
 worker_started = False

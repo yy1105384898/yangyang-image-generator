@@ -2968,11 +2968,24 @@ function renderMedia() {
       ? `<div class="image-preview-frame"><img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.prompt)}" loading="lazy"></div>`
       : `<div class="image-preview-frame"><div class="failed-preview"><span>!</span><strong>生成失败</strong><div><button type="button" data-card-action="retry">重试</button><button type="button" data-card-action="details">详情</button></div></div></div>`;
     const referenceStrip = item.references?.length ? `
-        <button class="image-reference-pill" type="button" data-card-action="reuse-references" title="复用这次使用的参考图">
-          <span class="image-reference-stack">${item.references.slice(0, 3).map((ref, index) => `<img src="${escapeAttr(ref.url)}" alt="" style="--i:${index}">`).join("")}</span>
-          <strong>参考 ${item.references.length}</strong>
-          <em>复用</em>
-        </button>
+        <div class="image-reference-box">
+          <button class="image-reference-toggle" type="button" data-card-action="toggle-references" aria-expanded="false" title="查看这次使用的参考图">
+            <span class="image-reference-stack">${item.references.slice(0, 3).map((ref, index) => `<img src="${escapeAttr(ref.url)}" alt="" style="--i:${index}">`).join("")}</span>
+            <strong>参考图 ${item.references.length}</strong>
+            <em>展开</em>
+          </button>
+          <div class="image-reference-tray hidden" aria-hidden="true">
+            <div class="image-reference-grid">
+              ${item.references.slice(0, MAX_REFERENCE_SELECTION).map((ref, index) => `
+                <a href="${escapeAttr(ref.url)}" target="_blank" rel="noopener" title="${escapeAttr(ref.name || `参考图 ${index + 1}`)}">
+                  <img src="${escapeAttr(ref.url)}" alt="${escapeAttr(ref.name || `参考图 ${index + 1}`)}" loading="lazy">
+                  <span>${escapeHtml(ref.name || `参考图 ${index + 1}`)}</span>
+                </a>
+              `).join("")}
+            </div>
+            <button class="image-reference-reuse" type="button" data-card-action="reuse-references">复用到输入区</button>
+          </div>
+        </div>
       ` : "";
     card.innerHTML = `
       <button class="image-select" type="button" aria-label="选择生成记录"><span>${selected ? "✓" : ""}</span></button>
@@ -3018,6 +3031,15 @@ function renderMedia() {
       syncSummary();
     });
     card.querySelector('[data-card-action="reuse-references"]')?.addEventListener("click", () => reuseItemReferences(item));
+    card.querySelector('[data-card-action="toggle-references"]')?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const tray = card.querySelector(".image-reference-tray");
+      const expanded = event.currentTarget.getAttribute("aria-expanded") === "true";
+      event.currentTarget.setAttribute("aria-expanded", String(!expanded));
+      event.currentTarget.querySelector("em").textContent = expanded ? "展开" : "收起";
+      tray?.classList.toggle("hidden", expanded);
+      tray?.setAttribute("aria-hidden", String(expanded));
+    });
     card.querySelector('[data-card-action="details"]')?.addEventListener("click", () => {
       alert(item.error || "生成失败");
     });
