@@ -2969,8 +2969,9 @@ function renderMedia() {
       : `<div class="failed-preview"><span>!</span><strong>生成失败</strong><div><button type="button" data-card-action="retry">重试</button><button type="button" data-card-action="details">详情</button></div></div>`;
     const referenceStrip = item.references?.length ? `
         <div class="image-reference-strip">
-          <div>${item.references.map((ref) => `<img src="${escapeAttr(ref.url)}" alt="${escapeAttr(ref.name || "参考图")}" title="${escapeAttr(ref.name || "参考图")}">`).join("")}</div>
-          <button type="button" data-card-action="reuse-references">复用参考图</button>
+          <div class="image-reference-stack">${item.references.map((ref, index) => `<img src="${escapeAttr(ref.url)}" alt="${escapeAttr(ref.name || "参考图")}" title="${escapeAttr(ref.name || "参考图")}" style="--i:${index}">`).join("")}</div>
+          <span>${item.editMode ? "图生图参考" : "参考图"} · ${item.references.length}</span>
+          <button type="button" data-card-action="reuse-references" aria-label="复用参考图">↻</button>
         </div>
       ` : "";
     card.innerHTML = `
