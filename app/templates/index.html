@@ -872,18 +872,12 @@
         <button class="icon-button" id="closeMediaPreview" type="button" aria-label="关闭图片预览">×</button>
       </header>
       <div class="media-preview-content">
-        <div class="media-preview-image-wrap">
+        <div id="mediaPreviewImageWrap" class="media-preview-image-wrap" tabindex="0" aria-label="图片预览，滚轮缩放，拖拽移动，双击复位">
           <img id="mediaPreviewImage" alt="">
         </div>
         <aside class="media-preview-info">
           <div id="mediaPreviewAgent" class="image-agent-tag hidden"></div>
           <p id="mediaPreviewPrompt"></p>
-          <div class="media-preview-actions">
-            <a id="mediaPreviewOpen" href="#" target="_blank" rel="noopener">打开</a>
-            <a id="mediaPreviewDownload" href="#" download>下载</a>
-            <button id="mediaPreviewReuse" type="button">复用</button>
-            <button id="mediaPreviewReuseRefs" type="button">参考</button>
-          </div>
         </aside>
       </div>
     </section>

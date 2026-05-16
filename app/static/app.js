@@ -121,13 +121,10 @@ const els = {
   mediaPreviewModal: $("#mediaPreviewModal"),
   mediaPreviewTitle: $("#mediaPreviewTitle"),
   mediaPreviewMeta: $("#mediaPreviewMeta"),
+  mediaPreviewImageWrap: $("#mediaPreviewImageWrap"),
   mediaPreviewImage: $("#mediaPreviewImage"),
   mediaPreviewAgent: $("#mediaPreviewAgent"),
   mediaPreviewPrompt: $("#mediaPreviewPrompt"),
-  mediaPreviewOpen: $("#mediaPreviewOpen"),
-  mediaPreviewDownload: $("#mediaPreviewDownload"),
-  mediaPreviewReuse: $("#mediaPreviewReuse"),
-  mediaPreviewReuseRefs: $("#mediaPreviewReuseRefs"),
   closeMediaPreview: $("#closeMediaPreview"),
   agentEntry: $("#agentEntry"),
   agentClearButton: $("#agentClearButton"),
@@ -193,6 +190,11 @@ let activeSubmitRequestId = "";
 let preflightAnalysisInFlight = false;
 let preflightCancelled = false;
 let activeMediaPreviewItem = null;
+let mediaPreviewScale = 1;
+let mediaPreviewTranslate = { x: 0, y: 0 };
+let mediaPreviewDrag = null;
+let mediaPreviewPointers = new Map();
+let mediaPreviewPinch = null;
 let textModelRefreshTimer = 0;
 let activeResearchJobId = "";
 let activeResearchProjectSignature = "";
@@ -1251,21 +1253,13 @@ async function loginPoolUser() {
 function jobIndustry(job) {
   const name = String(job.agent_name || "").trim();
   const id = String(job.agent_id || "").trim();
-  if (name) {
+  if (job.agent_enabled && name) {
     return {
       id: id || `agent:${name}`,
       name,
       variant: String(job.agent_variant || "").trim(),
       source: "agent",
     };
-  }
-  const haystack = `${job.title || ""}\n${job.prompt || ""}`.toLowerCase();
-  const matched = industryAgents.find((agent) => {
-    const agentName = String(agent.name || "").toLowerCase();
-    return agentName && haystack.includes(agentName);
-  });
-  if (matched) {
-    return { id: matched.id, name: matched.name, variant: "", source: "inferred" };
   }
   return { id: "general", name: "通用生图", variant: "", source: "general" };
 }
@@ -2622,6 +2616,26 @@ function disableSelectedAgent() {
   syncSummary();
 }
 
+function clearAgentForGeneralGeneration() {
+  const previousAgentName = selectedAgent?.name || "";
+  const currentTitle = els.title?.value.trim() || "";
+  const titleLooksLikeAgent = currentTitle && availableIndustryAgents().some((agent) => agent.name === currentTitle);
+  selectedAgent = null;
+  agentEnabled = false;
+  agentGenerated = false;
+  agentPlan = null;
+  agentPlanRevision = 0;
+  appliedAgentVariant = null;
+  agentComposerExpanded = false;
+  if (els.title && (currentTitle === previousAgentName || titleLooksLikeAgent)) {
+    els.title.value = "";
+  }
+  syncAgentEntry();
+  syncAgentComposer();
+  renderAgentPanel();
+  syncSummary();
+}
+
 function showGuide(step = 0) {
   if (!els.guideOverlay) return;
   if ((location.hash || "#home") !== "#studio") return;
@@ -3016,6 +3030,7 @@ function reuseItemReferences(item) {
 function applyGalleryItemToPrompt(item, withReferences = false) {
   if (!item) return;
   els.prompt.value = item.prompt || "";
+  clearAgentForGeneralGeneration();
   if (withReferences) {
     reuseItemReferences(item);
   } else {
@@ -3025,15 +3040,36 @@ function applyGalleryItemToPrompt(item, withReferences = false) {
   syncSummary();
 }
 
+function clampMediaPreviewScale(value) {
+  return Math.max(0.35, Math.min(5, value));
+}
+
+function syncMediaPreviewTransform() {
+  if (!els.mediaPreviewImage) return;
+  els.mediaPreviewImage.style.transform = `translate3d(${mediaPreviewTranslate.x}px, ${mediaPreviewTranslate.y}px, 0) scale(${mediaPreviewScale})`;
+  els.mediaPreviewImage.style.cursor = mediaPreviewScale > 1 ? "grab" : "zoom-in";
+}
+
+function resetMediaPreviewTransform() {
+  mediaPreviewScale = 1;
+  mediaPreviewTranslate = { x: 0, y: 0 };
+  syncMediaPreviewTransform();
+}
+
 function setMediaPreview(open = false, item = activeMediaPreviewItem) {
   if (!els.mediaPreviewModal) return;
   activeMediaPreviewItem = open ? item : null;
   els.mediaPreviewModal.classList.toggle("hidden", !open);
   document.body.classList.toggle("media-preview-open", open);
+  mediaPreviewDrag = null;
+  mediaPreviewPointers.clear();
+  mediaPreviewPinch = null;
   if (!open || !item) {
     if (els.mediaPreviewImage) els.mediaPreviewImage.removeAttribute("src");
+    resetMediaPreviewTransform();
     return;
   }
+  resetMediaPreviewTransform();
   const meta = [
     item.title || "生成图片",
     item.aspect_ratio,
@@ -3047,14 +3083,11 @@ function setMediaPreview(open = false, item = activeMediaPreviewItem) {
     els.mediaPreviewImage.alt = item.prompt || "生成图片";
   }
   if (els.mediaPreviewPrompt) els.mediaPreviewPrompt.textContent = item.prompt || "暂无提示词";
-  if (els.mediaPreviewOpen) els.mediaPreviewOpen.href = item.url || "#";
-  if (els.mediaPreviewDownload) els.mediaPreviewDownload.href = item.url || "#";
   if (els.mediaPreviewAgent) {
     const agentText = item.agentName ? `✣ ${item.agentName} ${item.agentVariant ? variantLabel(item.agentVariant) : ""}` : "";
     els.mediaPreviewAgent.textContent = agentText;
     els.mediaPreviewAgent.classList.toggle("hidden", !agentText);
   }
-  els.mediaPreviewReuseRefs?.classList.toggle("hidden", !item.references?.length);
 }
 
 function renderMedia() {
@@ -3323,6 +3356,7 @@ async function performSubmitJob(promptOverride = "") {
     els.submitJob.disabled = true;
     els.submitJob.textContent = "…";
     const title = els.title.value.trim() || (agentEnabled && selectedAgent ? selectedAgent.name : "");
+    const activeAgent = agentEnabled && selectedAgent ? selectedAgent : null;
     const created = await api("/api/jobs", {
       method: "POST",
       body: JSON.stringify({
@@ -3335,10 +3369,10 @@ async function performSubmitJob(promptOverride = "") {
         connection_mode: els.connectionMode.value,
         api_url: selectedApiUrl(),
         api_key: selectedApiKey(),
-        agent_id: selectedAgent?.id || "",
-        agent_name: selectedAgent?.name || "",
-        agent_variant: appliedAgentVariant || "",
-        agent_enabled: Boolean(agentEnabled && selectedAgent),
+        agent_id: activeAgent?.id || "",
+        agent_name: activeAgent?.name || "",
+        agent_variant: activeAgent ? (appliedAgentVariant || "") : "",
+        agent_enabled: Boolean(activeAgent),
         aspect_ratio: els.aspectRatio.value,
         resolution: els.resolution.value,
         size: requestSize(),
@@ -6056,14 +6090,78 @@ els.closeMediaPreview?.addEventListener("click", () => setMediaPreview(false));
 els.mediaPreviewModal?.addEventListener("click", (event) => {
   if (event.target === els.mediaPreviewModal) setMediaPreview(false);
 });
-els.mediaPreviewReuse?.addEventListener("click", () => {
-  applyGalleryItemToPrompt(activeMediaPreviewItem, false);
-  setMediaPreview(false);
+els.mediaPreviewImageWrap?.addEventListener("wheel", (event) => {
+  if (els.mediaPreviewModal?.classList.contains("hidden")) return;
+  event.preventDefault();
+  const nextScale = clampMediaPreviewScale(mediaPreviewScale * (event.deltaY < 0 ? 1.12 : 0.88));
+  if (nextScale <= 1.01) {
+    mediaPreviewScale = 1;
+    mediaPreviewTranslate = { x: 0, y: 0 };
+  } else {
+    mediaPreviewScale = nextScale;
+  }
+  syncMediaPreviewTransform();
+}, { passive: false });
+els.mediaPreviewImageWrap?.addEventListener("dblclick", () => resetMediaPreviewTransform());
+els.mediaPreviewImageWrap?.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  mediaPreviewPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  els.mediaPreviewImageWrap.setPointerCapture?.(event.pointerId);
+  if (mediaPreviewPointers.size === 2) {
+    const points = [...mediaPreviewPointers.values()];
+    mediaPreviewPinch = {
+      startDistance: Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y),
+      startScale: mediaPreviewScale,
+    };
+    mediaPreviewDrag = null;
+  } else if (mediaPreviewScale > 1) {
+    mediaPreviewDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: mediaPreviewTranslate.x,
+      baseY: mediaPreviewTranslate.y,
+    };
+    els.mediaPreviewImageWrap.classList.add("dragging");
+    if (els.mediaPreviewImage) els.mediaPreviewImage.style.cursor = "grabbing";
+  }
+  event.preventDefault();
 });
-els.mediaPreviewReuseRefs?.addEventListener("click", () => {
-  applyGalleryItemToPrompt(activeMediaPreviewItem, true);
-  setMediaPreview(false);
+els.mediaPreviewImageWrap?.addEventListener("pointermove", (event) => {
+  if (mediaPreviewPointers.has(event.pointerId)) {
+    mediaPreviewPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
+  if (mediaPreviewPinch && mediaPreviewPointers.size >= 2) {
+    const points = [...mediaPreviewPointers.values()];
+    const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    mediaPreviewScale = clampMediaPreviewScale(mediaPreviewPinch.startScale * (distance / Math.max(1, mediaPreviewPinch.startDistance)));
+    if (mediaPreviewScale <= 1.01) {
+      mediaPreviewScale = 1;
+      mediaPreviewTranslate = { x: 0, y: 0 };
+    }
+    syncMediaPreviewTransform();
+    event.preventDefault();
+    return;
+  }
+  if (!mediaPreviewDrag || mediaPreviewDrag.pointerId !== event.pointerId) return;
+  mediaPreviewTranslate = {
+    x: mediaPreviewDrag.baseX + event.clientX - mediaPreviewDrag.startX,
+    y: mediaPreviewDrag.baseY + event.clientY - mediaPreviewDrag.startY,
+  };
+  syncMediaPreviewTransform();
 });
+const finishMediaPreviewDrag = (event) => {
+  mediaPreviewPointers.delete(event.pointerId);
+  els.mediaPreviewImageWrap?.releasePointerCapture?.(event.pointerId);
+  if (mediaPreviewPointers.size < 2) mediaPreviewPinch = null;
+  if (mediaPreviewDrag?.pointerId === event.pointerId || !mediaPreviewPointers.size) {
+    els.mediaPreviewImageWrap?.classList.remove("dragging");
+    mediaPreviewDrag = null;
+  }
+  syncMediaPreviewTransform();
+};
+els.mediaPreviewImageWrap?.addEventListener("pointerup", finishMediaPreviewDrag);
+els.mediaPreviewImageWrap?.addEventListener("pointercancel", finishMediaPreviewDrag);
 els.newTask.addEventListener("click", () => {
   selectedHistoryJobId = NEW_TASK_DRAFT_ID;
   selectedHistoryDayKey = null;
