@@ -1292,9 +1292,9 @@ body.research-active .studio-view {
 }
 .image-card-body {
   display: grid;
-  grid-template-rows: auto auto 24px 32px 30px;
+  grid-template-rows: 24px 24px 24px 32px 68px;
   gap: 8px;
-  min-height: 178px;
+  min-height: 216px;
   padding: 10px;
 }
 .image-card-line {
@@ -1344,6 +1344,7 @@ body.research-active .studio-view {
   font-weight: 820;
 }
 .image-agent-tag {
+  grid-row: 3;
   display: inline-flex;
   width: fit-content;
   max-width: 100%;
@@ -1354,6 +1355,7 @@ body.research-active .studio-view {
   white-space: nowrap;
 }
 .image-error {
+  grid-row: 3;
   overflow: hidden;
   padding: 3px 8px;
   border: 1px solid #ffb8b2;
@@ -1366,6 +1368,7 @@ body.research-active .studio-view {
   white-space: nowrap;
 }
 .image-card p {
+  grid-row: 4;
   overflow: hidden;
   display: -webkit-box;
   min-height: 32px;
@@ -1377,9 +1380,14 @@ body.research-active .studio-view {
   -webkit-box-orient: vertical;
 }
 .image-actions {
-  display: flex;
+  display: grid;
+  grid-row: 5;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 30px;
   align-self: end;
-  gap: 7px;
+  align-content: start;
+  gap: 8px;
+  min-height: 68px;
 }
 .image-actions a,
 .image-actions button {
@@ -1400,8 +1408,9 @@ body.research-active .studio-view {
   white-space: nowrap;
 }
 .image-actions [data-card-action="reuse-with-references"] {
-  flex: 1.55;
-  min-width: 82px;
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin-top: 2px;
 }
 
 .media-preview-modal {
