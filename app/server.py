@@ -2691,6 +2691,94 @@ def normalize_agent_mode_plan(plan: dict, fallback_prompt: str) -> dict:
     }
 
 
+def normalize_prompt_analysis_plan(plan: dict, payload: dict) -> dict:
+    if not isinstance(plan, dict):
+        raise ValueError("prompt analysis must be an object")
+    fallback_prompt = str(payload.get("prompt") or "").strip()
+    prompt = str(plan.get("prompt") or fallback_prompt or "").strip()
+    if not prompt:
+        raise ValueError("prompt analysis missing prompt")
+    if fallback_prompt and fallback_prompt not in prompt:
+        prompt = f"{fallback_prompt}\n\n优化补充：{prompt}"
+    mode = str(payload.get("mode") or plan.get("mode") or "optimize").strip().lower()
+    if mode not in {"preflight", "optimize", "params", "failure", "style"}:
+        mode = "optimize"
+    aspect_ratio = str(plan.get("aspect_ratio") or payload.get("aspect_ratio") or "").strip()
+    if aspect_ratio not in {"1:1", "4:5", "5:4", "3:4", "4:3", "2:3", "3:2", "16:9", "9:16", "21:9", "1:4", "8:1", "1:8"}:
+        aspect_ratio = str(payload.get("aspect_ratio") or "").strip()
+    try:
+        count = int(plan.get("count") or payload.get("count") or 1)
+    except (TypeError, ValueError):
+        count = 1
+    risks = plan.get("risks") if isinstance(plan.get("risks"), list) else []
+    steps = plan.get("steps") if isinstance(plan.get("steps"), list) else []
+    notes = plan.get("notes") if isinstance(plan.get("notes"), list) else []
+    return {
+        "mode": mode,
+        "task_type": "single",
+        "brief": str(plan.get("brief") or "").strip()[:1600],
+        "prompt": prompt[:5000],
+        "aspect_ratio": aspect_ratio,
+        "count": max(1, min(count, 20)),
+        "negative": str(plan.get("negative") or payload.get("negative") or "").strip()[:1200],
+        "risks": [str(item or "").strip() for item in risks if str(item or "").strip()][:8],
+        "steps": [str(item or "").strip() for item in steps if str(item or "").strip()][:8],
+        "notes": [str(item or "").strip() for item in notes if str(item or "").strip()][:8],
+    }
+
+
+def build_prompt_analysis_messages(payload: dict) -> list[dict]:
+    prompt = str(payload.get("prompt") or "").strip()
+    mode = str(payload.get("mode") or "optimize").strip().lower()
+    references = payload.get("references") if isinstance(payload.get("references"), list) else []
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是生图发送前风险预判与提示词优化助手。只输出严格 JSON object，不要 Markdown。"
+                "必须围绕用户当前输入做风险识别和规避优化，不能把任务改写成无关的新任务。"
+                "如果是 failure 模式，先判断可能失败的原因，再给出规避这些风险后的优化提示词。"
+                "参考图只作为约束摘要，不要凭空编造参考图中不存在的文字、Logo、品牌或主体。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps({
+                "mode": mode,
+                "output_schema": {
+                    "brief": "string: 对当前任务的简短理解",
+                    "risks": ["string: 具体风险点"],
+                    "steps": ["string: 对应规避策略"],
+                    "prompt": "string: 基于风险规避后的可直接生图提示词",
+                    "aspect_ratio": "string",
+                    "count": "number",
+                    "negative": "string",
+                    "notes": ["string"],
+                },
+                "requirements": [
+                    "不得引入 user_prompt 没有提到的核心文字、品牌、人名或物体。",
+                    "如果有参考图，只说明保留参考图主体/构图/光影/色彩等约束；不要猜测参考图具体文字内容。",
+                    "failure 模式必须输出 risks，并在 prompt 中加入规避错误文字、低清晰度、主体变形、过度锐化等风险的约束。",
+                    "params 模式侧重比例、张数、负面提示词和质量建议，但 prompt 仍要保持当前用户意图。",
+                    "style 模式可以增强风格，但不能改变用户要生成的主体和场景。",
+                ],
+                "user_prompt": prompt,
+                "current": {
+                    "image_model": payload.get("image_model"),
+                    "aspect_ratio": payload.get("aspect_ratio"),
+                    "resolution": payload.get("resolution"),
+                    "size": payload.get("size"),
+                    "count": payload.get("count"),
+                    "quality": payload.get("quality"),
+                    "negative": payload.get("negative"),
+                    "reference_count": len(references[:4]),
+                },
+                "references": references[:4],
+            }, ensure_ascii=False),
+        },
+    ]
+
+
 def build_agent_mode_messages(payload: dict) -> list[dict]:
     prompt = str(payload.get("prompt") or "").strip()
     references = payload.get("references") if isinstance(payload.get("references"), list) else []
@@ -2758,6 +2846,30 @@ def call_agent_mode_text_model(api_url: str, api_key: str, model: str, payload: 
     message = choices[0].get("message") if isinstance(choices[0], dict) else {}
     content = message.get("content") if isinstance(message, dict) else ""
     return normalize_agent_mode_plan(extract_json_object(content), str(payload.get("prompt") or ""))
+
+
+def call_prompt_analysis_text_model(api_url: str, api_key: str, model: str, payload: dict) -> dict:
+    api_base = normalize_api_base(api_url)
+    headers = {"Content-Type": "application/json"}
+    auth = bearer_token(api_key)
+    if auth:
+        headers["Authorization"] = auth
+    body = {
+        "model": model,
+        "messages": build_prompt_analysis_messages(payload),
+        "temperature": 0.35,
+    }
+    endpoint = urljoin(api_base + "/", "v1/chat/completions")
+    resp = requests.post(endpoint, headers=headers, json=body, timeout=AGENT_TEXT_TIMEOUT)
+    if resp.status_code >= 400:
+        raise RuntimeError(redact_secrets(f"New API {resp.status_code}: {resp.text[:800].strip()}"))
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("文本模型没有返回 choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    return normalize_prompt_analysis_plan(extract_json_object(content), payload)
 
 
 def call_agent_text_model(api_url: str, api_key: str, model: str, payload: dict) -> dict:
@@ -4045,6 +4157,51 @@ def agent_mode_plan():
         return jsonify({"ok": True, "plan": plan, "model": model})
     except Exception as exc:
         return jsonify({"ok": False, "error": "Agent 模式 A 拆解失败", "detail": redact_secrets(str(exc))}), 200
+
+
+@app.post("/api/prompt-analysis")
+def prompt_analysis():
+    auth = login_required_json()
+    if auth:
+        return auth
+    payload = request.get_json(silent=True) or {}
+    model = str(payload.get("text_model") or DEFAULT_TEXT_MODEL).strip()
+    connection_mode = str(payload.get("connection_mode") or "custom").strip()
+    text_custom_fallback = bool(payload.get("text_custom_fallback"))
+    api_url = str(payload.get("text_api_url") or payload.get("api_url") or "").strip()
+    api_key = str(payload.get("text_api_key") or payload.get("api_key") or "").strip()
+    if not model:
+        return jsonify({"error": "请先选择或填写文本分析模型"}), 400
+    try:
+        if connection_mode == "pool" and not text_custom_fallback:
+            pool_user, pool_error = require_pool_user_json()
+            if pool_error:
+                return pool_error
+            if not pool_available_accounts():
+                return jsonify({"ok": False, "error": "本地号池没有可用账号", "detail": "请先到管理后台导入并刷新可用号池账号"}), 200
+            account = pick_pool_account()
+            token = account["access_token"]
+            try:
+                client = ChatGptImageClient(token)
+                resp = client.start_text_generation(model, build_prompt_analysis_messages(payload), {"reasoning_effort": "low"})
+                content = collect_pool_text_response(resp)
+                if not content:
+                    raise RuntimeError("号池文本模型没有返回内容")
+                plan = normalize_prompt_analysis_plan(extract_json_object(content), payload)
+                mark_pool_account_result(token, True)
+            except Exception as exc:
+                mark_pool_account_result(token, False, redact_secrets(str(exc)))
+                raise
+        else:
+            api_url, api_key, _used_debug_key, _route_kind = resolve_custom_api_credentials(api_url, api_key, "text")
+            if not api_url:
+                return jsonify({"error": "请先填写文本模型 API URL"}), 400
+            if not api_key:
+                return jsonify({"error": "请先填写文本模型 API Key"}), 400
+            plan = call_prompt_analysis_text_model(api_url, api_key, model, payload)
+        return jsonify({"ok": True, "plan": plan, "model": model})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "文本分析失败", "detail": redact_secrets(str(exc))}), 200
 
 
 @app.post("/api/research-plan")

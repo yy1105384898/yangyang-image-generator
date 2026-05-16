@@ -98,6 +98,10 @@ const els = {
   preflightRunAi: $("#preflightRunAi"),
   stopAutoGenerate: $("#stopAutoGenerate"),
   promptScore: $("#promptScore"),
+  analysisRiskTitle: $("#analysisRiskTitle"),
+  analysisParamTitle: $("#analysisParamTitle"),
+  analysisPromptTitle: $("#analysisPromptTitle"),
+  analysisStyleTitle: $("#analysisStyleTitle"),
   analysisAspect: $("#analysisAspect"),
   analysisSize: $("#analysisSize"),
   analysisCount: $("#analysisCount"),
@@ -178,6 +182,7 @@ let agentPlanRevision = 0;
 let appliedAgentVariant = null;
 let previewAgentVariant = "stable";
 let agentModePlan = null;
+let promptAnalysisPlan = null;
 let customIndustryAgents = [];
 let agentComposerExpanded = false;
 let guideStep = 0;
@@ -2349,6 +2354,7 @@ function applyAgentModePlan(plan) {
 }
 
 function showAgentModeAnalysis(plan, originalPrompt) {
+  promptAnalysisPlan = null;
   const prompt = applyAgentModePlan(plan) || originalPrompt;
   const notes = [
     plan.brief ? `Brief：${plan.brief}` : "",
@@ -2394,17 +2400,57 @@ function flashButton(button, text, duration = 1100) {
   }, duration);
 }
 
+function syncAnalysisModeLabels(mode = "optimize") {
+  const labels = {
+    preflight: ["发送前预检", "推荐参数", "预检优化提示词", "预检标签"],
+    optimize: ["优化依据", "参数建议", "优化提示词", "优化标签"],
+    params: ["参数判断", "推荐参数", "当前提示词参考", "参数标签"],
+    failure: ["风险预判", "规避参数", "规避风险后的提示词", "风险标签"],
+    style: ["风格方向", "风格参数", "风格增强提示词", "风格标签"],
+  }[mode] || ["优化依据", "参数建议", "优化提示词", "优化标签"];
+  if (els.analysisRiskTitle) els.analysisRiskTitle.textContent = labels[0];
+  if (els.analysisParamTitle) els.analysisParamTitle.textContent = labels[1];
+  if (els.analysisPromptTitle) els.analysisPromptTitle.textContent = labels[2];
+  if (els.analysisStyleTitle) els.analysisStyleTitle.textContent = labels[3];
+}
+
+function isPromptAnalysisRelevant(source = "", result = "") {
+  const sourceText = compactText(source);
+  const resultText = compactText(result);
+  if (!sourceText || !resultText) return true;
+  if (resultText.includes(sourceText)) return true;
+  const tokens = sourceText
+    .split(/[\s,，。.!！？、；;：:]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2);
+  if (!tokens.length) return true;
+  const matched = tokens.filter((token) => resultText.includes(token)).length;
+  return matched / tokens.length >= 0.45;
+}
+
 function showTextAiAnalysis(plan, originalPrompt, mode = "preflight") {
-  const prompt = String(plan?.prompt || originalPrompt || "").trim();
-  agentModePlan = plan || null;
+  syncAnalysisModeLabels(mode);
+  let prompt = String(plan?.prompt || originalPrompt || "").trim();
+  if (!isPromptAnalysisRelevant(originalPrompt, prompt)) {
+    prompt = recommendedPromptText();
+    plan = {
+      ...(plan || {}),
+      prompt,
+      risks: ["文本模型返回内容与当前输入不匹配，已回退到本地规则优化。"],
+      notes: ["请重新点击对应按钮可再次调用文本模型。"],
+    };
+  }
+  agentModePlan = null;
+  promptAnalysisPlan = plan || null;
   const warning = els.promptAnalysisCard?.querySelector(".analysis-warning");
   const notes = [
     plan?.brief ? `Brief：${plan.brief}` : "",
-    Array.isArray(plan?.steps) && plan.steps.length ? `拆解步骤：${plan.steps.join("；")}` : "",
+    Array.isArray(plan?.risks) && plan.risks.length ? `风险点：${plan.risks.join("；")}` : "",
+    Array.isArray(plan?.steps) && plan.steps.length ? `优化策略：${plan.steps.join("；")}` : "",
     Array.isArray(plan?.notes) && plan.notes.length ? `注意事项：${plan.notes.join("；")}` : "",
   ].filter(Boolean);
   if (warning) {
-    warning.querySelector("b").textContent = "文本 AI 已完成分析";
+    warning.querySelector("b").textContent = mode === "failure" ? "文本 AI 已完成风险预判" : "文本 AI 已完成分析";
     warning.querySelector("span").textContent = notes.join(" ") || "已根据当前提示词、参考图和参数生成优化建议。";
   }
   const styleTags = els.promptAnalysisCard?.querySelector(".analysis-style-tags");
@@ -4090,11 +4136,45 @@ async function requestPromptAnalysis(mode = "optimize") {
   if (!textModel) {
     throw new Error("未配置文本分析模型");
   }
-  const plan = await requestAgentModePlan(els.prompt.value.trim());
-  return { ...plan, analysisMode: mode };
+  const references = state.references
+    .filter((ref) => selectedReferenceIds.has(ref.id))
+    .slice(0, 4)
+    .map((ref) => ({
+      id: ref.id,
+      name: ref.name || ref.filename || "",
+      mime: ref.mime || "",
+    }));
+  const data = await api("/api/prompt-analysis", {
+    method: "POST",
+    body: JSON.stringify({
+      mode,
+      connection_mode: els.connectionMode.value,
+      api_url: selectedApiUrl(),
+      api_key: selectedApiKey(),
+      text_model: textModel,
+      text_api_url: selectedTextApiUrl(),
+      text_api_key: selectedTextApiKey(),
+      text_custom_fallback: Boolean(els.connectionMode.value === "pool" && !verifiedTextModels.length),
+      prompt: els.prompt.value.trim(),
+      image_model: els.model.value,
+      aspect_ratio: els.aspectRatio.value,
+      resolution: els.resolution.value,
+      size: requestSize(),
+      count: Number(els.count.value || 1),
+      quality: els.quality.value,
+      negative: els.negative.value.trim(),
+      references,
+    }),
+  });
+  if (data && data.ok === false) {
+    throw new Error(data.detail || data.error || "文本分析失败");
+  }
+  return { ...(data.plan || {}), textModel: data.model || textModel, analysisMode: mode };
 }
 
 function showPromptAnalysis(mode = "optimize") {
+  promptAnalysisPlan = null;
+  syncAnalysisModeLabels(mode);
   const titles = {
     optimize: "提示词优化完成",
     params: "参数推荐完成",
@@ -4173,6 +4253,7 @@ async function showSmartPromptAnalysis(mode = "optimize") {
 
 function closePromptAnalysis() {
   stopPreflight();
+  promptAnalysisPlan = null;
   els.promptAnalysisCard?.classList.add("hidden");
   els.composer?.classList.remove("analysis-open");
   setPreflightActionMode(false);
@@ -4195,6 +4276,21 @@ function applyOptimizedPrompt() {
 function applyRecommendedParams() {
   if (agentModePlan) {
     applyAgentModePlan(agentModePlan);
+    flashButton(els.applyOptimizedParams, "已应用参数");
+    return;
+  }
+  if (promptAnalysisPlan) {
+    if (promptAnalysisPlan.aspect_ratio && [...els.aspectRatio.options].some((option) => option.value === promptAnalysisPlan.aspect_ratio)) {
+      els.aspectRatio.value = promptAnalysisPlan.aspect_ratio;
+    }
+    if (promptAnalysisPlan.count) {
+      els.count.value = String(Math.max(1, Math.min(Number(promptAnalysisPlan.count) || 1, 20)));
+      syncConcurrencyToCount();
+    }
+    if (promptAnalysisPlan.negative) {
+      els.negative.value = String(promptAnalysisPlan.negative).trim();
+    }
+    syncSummary();
     flashButton(els.applyOptimizedParams, "已应用参数");
     return;
   }
