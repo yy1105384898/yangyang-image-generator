@@ -2967,26 +2967,6 @@ function renderMedia() {
     const preview = item.url
       ? `<div class="image-preview-frame"><img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.prompt)}" loading="lazy"></div>`
       : `<div class="image-preview-frame"><div class="failed-preview"><span>!</span><strong>生成失败</strong><div><button type="button" data-card-action="retry">重试</button><button type="button" data-card-action="details">详情</button></div></div></div>`;
-    const referenceStrip = item.references?.length ? `
-        <div class="image-reference-box">
-          <button class="image-reference-toggle" type="button" data-card-action="toggle-references" aria-expanded="false" title="查看这次使用的参考图">
-            <span class="image-reference-stack">${item.references.slice(0, 3).map((ref, index) => `<img src="${escapeAttr(ref.url)}" alt="" style="--i:${index}">`).join("")}</span>
-            <strong>参考图 ${item.references.length}</strong>
-            <em>展开</em>
-          </button>
-          <div class="image-reference-tray hidden" aria-hidden="true">
-            <div class="image-reference-grid">
-              ${item.references.slice(0, MAX_REFERENCE_SELECTION).map((ref, index) => `
-                <a href="${escapeAttr(ref.url)}" target="_blank" rel="noopener" title="${escapeAttr(ref.name || `参考图 ${index + 1}`)}">
-                  <img src="${escapeAttr(ref.url)}" alt="${escapeAttr(ref.name || `参考图 ${index + 1}`)}" loading="lazy">
-                  <span>${escapeHtml(ref.name || `参考图 ${index + 1}`)}</span>
-                </a>
-              `).join("")}
-            </div>
-            <button class="image-reference-reuse" type="button" data-card-action="reuse-references">复用到输入区</button>
-          </div>
-        </div>
-      ` : "";
     card.innerHTML = `
       <button class="image-select" type="button" aria-label="选择生成记录"><span>${selected ? "✓" : ""}</span></button>
       <span class="image-index">#${escapeHtml(item.index || 1)}</span>
@@ -3004,13 +2984,13 @@ function renderMedia() {
           ${item.quality && item.quality !== "auto" ? `<span>${escapeHtml(item.quality)}</span>` : ""}
         </div>
         ${item.agentName ? `<div class="image-agent-tag">✣ ${escapeHtml(item.agentName)} ${item.agentVariant ? variantLabel(item.agentVariant) : ""}</div>` : ""}
-        ${referenceStrip}
         ${item.status === "error" ? `<div class="image-error">${escapeHtml(item.error || "生成失败")}</div>` : ""}
         <p>${escapeHtml(item.prompt || "暂无提示词")}</p>
         <div class="image-actions">
           ${item.url ? `<a href="${escapeAttr(item.url)}" target="_blank" rel="noopener">打开</a><a href="${escapeAttr(item.url)}" download>下载</a>` : ""}
           ${item.status === "error" ? `<button type="button" class="retry" data-card-action="retry">重试</button>` : ""}
           <button type="button" data-card-action="reuse">复用</button>
+          ${item.references?.length ? `<button type="button" data-card-action="reuse-with-references">参考图复用</button>` : ""}
         </div>
       </div>
     `;
@@ -3024,21 +3004,14 @@ function renderMedia() {
     });
     card.querySelector('[data-card-action="reuse"]')?.addEventListener("click", () => {
       els.prompt.value = item.prompt || "";
-      if (item.references?.length) {
-        selectedReferenceIds = new Set(item.references.slice(0, MAX_REFERENCE_SELECTION).map((ref) => ref.id));
-        renderReferences();
-      }
+      selectedReferenceIds.clear();
+      renderReferences();
       syncSummary();
     });
-    card.querySelector('[data-card-action="reuse-references"]')?.addEventListener("click", () => reuseItemReferences(item));
-    card.querySelector('[data-card-action="toggle-references"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const tray = card.querySelector(".image-reference-tray");
-      const expanded = event.currentTarget.getAttribute("aria-expanded") === "true";
-      event.currentTarget.setAttribute("aria-expanded", String(!expanded));
-      event.currentTarget.querySelector("em").textContent = expanded ? "展开" : "收起";
-      tray?.classList.toggle("hidden", expanded);
-      tray?.setAttribute("aria-hidden", String(expanded));
+    card.querySelector('[data-card-action="reuse-with-references"]')?.addEventListener("click", () => {
+      els.prompt.value = item.prompt || "";
+      reuseItemReferences(item);
+      syncSummary();
     });
     card.querySelector('[data-card-action="details"]')?.addEventListener("click", () => {
       alert(item.error || "生成失败");
