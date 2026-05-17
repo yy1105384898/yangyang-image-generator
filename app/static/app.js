@@ -1102,24 +1102,22 @@ function clampNumberInput(input, fallback, min, max) {
 
 function recommendedConcurrency(count) {
   const value = Number.parseInt(count, 10);
-  if (!Number.isFinite(value) || value <= 1) return 1;
-  if (value <= 3) return 2;
-  return Math.min(6, Math.ceil(value / 2));
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(value, 20));
 }
 
 function syncConcurrencyToCount() {
   if (!els.count || !els.concurrency) return;
   const count = clampNumberInput(els.count, 1, 1, 20);
-  const current = clampNumberInput(els.concurrency, 2, 1, 6);
   const next = recommendedConcurrency(count);
-  if (current < next || count <= 1) {
-    els.concurrency.value = String(next);
-  }
+  els.concurrency.value = String(next);
+  if (els.quickConcurrency) els.quickConcurrency.value = String(next);
 }
 
 function normalizeGenerationNumbers() {
   const count = clampNumberInput(els.count, 1, 1, 20);
-  const concurrency = clampNumberInput(els.concurrency, 2, 1, 6);
+  const concurrency = recommendedConcurrency(count);
+  if (els.concurrency) els.concurrency.value = String(concurrency);
   const retryLimit = clampNumberInput(els.retryLimit, 2, 0, 5);
   if (els.quickCount) els.quickCount.value = String(count);
   if (els.quickConcurrency) els.quickConcurrency.value = String(concurrency);
@@ -6329,7 +6327,7 @@ els.prompt.addEventListener("input", syncSummary);
       referenceAspectAutoEnabled = false;
       referenceAspectAutoValue = "";
     }
-    if (el === els.count && eventName === "change") syncConcurrencyToCount();
+    if (el === els.count || el === els.concurrency) syncConcurrencyToCount();
     syncSummary();
   }));
 });
@@ -6490,7 +6488,6 @@ els.closeQuickConfig?.addEventListener("click", () => setQuickConfigPanel(false)
   [els.quickCount, els.count],
   [els.quickAspect, els.aspectRatio],
   [els.quickResolution, els.resolution],
-  [els.quickConcurrency, els.concurrency],
   [els.quickQuality, els.quality],
   [els.quickFormat, els.outputFormat],
 ].forEach(([quick, source]) => {

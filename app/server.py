@@ -3574,7 +3574,7 @@ def run_job(job_id: str) -> None:
             base_prompt = build_prompt(job)
             prompts = [base_prompt for _ in range(count)]
         retry_limit = max(0, min(int(job.get("retry_limit") or 0), 5))
-        concurrency = max(1, min(int(job.get("concurrency") or 1), 6, len(prompts)))
+        concurrency = max(1, min(int(job.get("count") or len(prompts) or 1), len(prompts), 20))
         model_candidates = [str(job.get("model") or DEFAULT_MODEL).strip()]
 
         def generate_prompt_index(item: tuple[int, str]) -> list[dict]:
@@ -4578,7 +4578,7 @@ def create_job():
         "moderation": str(normalized_options.get("moderation") or requested_job_options["moderation"]),
         "output_compression": str(normalized_options.get("output_compression") or requested_job_options["output_compression"]),
         "count": count,
-        "concurrency": max(1, min(int(payload.get("concurrency") or 2), 6)),
+        "concurrency": count,
         "retry_limit": max(0, min(int(payload.get("retry_limit") or 2), 5)),
         "seed": str(payload.get("seed") or "").strip(),
         "variants": [str(v).strip() for v in payload.get("variants", []) if str(v).strip()],
@@ -4648,6 +4648,7 @@ def retry_job(job_id):
     }
     normalized_retry_options, _retry_meta = normalize_image_request_options(retry_options)
     retry_count = int(source.get("retry_count") or 0) + 1
+    retry_count_total = max(1, min(int(source.get("count") or 1), 20))
     job = {
         "id": uuid.uuid4().hex,
         "client_id": client_id,
@@ -4681,8 +4682,8 @@ def retry_job(job_id):
         "background": str(normalized_retry_options.get("background") or retry_options["background"]),
         "moderation": str(normalized_retry_options.get("moderation") or retry_options["moderation"]),
         "output_compression": str(normalized_retry_options.get("output_compression") or retry_options["output_compression"]),
-        "count": max(1, min(int(source.get("count") or 1), 20)),
-        "concurrency": max(1, min(int(source.get("concurrency") or 2), 6)),
+        "count": retry_count_total,
+        "concurrency": retry_count_total,
         "retry_limit": max(0, min(int(payload.get("retry_limit") or source.get("retry_limit") or 2), 5)),
         "seed": str(source.get("seed") or "").strip(),
         "variants": [str(v).strip() for v in source.get("variants", []) if str(v).strip()],
@@ -4691,7 +4692,7 @@ def retry_job(job_id):
         "retry_of": job_id,
         "retry_count": retry_count,
         "status": "queued",
-        "progress": {"done": 0, "total": max(1, min(int(source.get("count") or 1), 20)), "message": "重试排队中"},
+        "progress": {"done": 0, "total": retry_count_total, "message": "重试排队中"},
         "media_ids": [],
         "error": "",
         "created_at": now_ts(),

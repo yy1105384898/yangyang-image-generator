@@ -485,7 +485,14 @@
 
         <div class="history-title">
           <button id="toggleHistory" class="history-toggle" type="button" aria-expanded="false">最近记录</button>
-          <button id="clearMedia" class="icon-button" type="button">⌫</button>
+          <button id="clearMedia" class="icon-button danger-clean" type="button" aria-label="删除会话记录">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 7V5.8C9 4.8 9.8 4 10.8 4h2.4c1 0 1.8.8 1.8 1.8V7"/>
+              <path d="M6.5 7h11"/>
+              <path d="M8 9l.6 8.2c.1 1 1 1.8 2 1.8h2.8c1 0 1.9-.8 2-1.8L16 9"/>
+              <path d="M10.5 11.2v5.2M13.5 11.2v5.2"/>
+            </svg>
+          </button>
         </div>
         <div id="historyList" class="history-list hidden"></div>
       </aside>
@@ -633,7 +640,7 @@
             <input id="referenceUpload" class="hidden-input" type="file" accept="image/*" multiple>
             <button class="preset-button" id="presetButton" type="button">✣ 预设</button>
             <textarea id="prompt" rows="1" placeholder="描述你想生成的图片..."></textarea>
-            <button id="quickConfigButton" class="quick-config-button" type="button" title="打开生成配置：1张 · 1:1 · 1K · 1024x1024 · PNG · 并发 2">☷ 1张 1:1 1K</button>
+            <button id="quickConfigButton" class="quick-config-button" type="button" title="打开生成配置：1张 · 1:1 · 1K · 1024x1024 · PNG · 并发 1">☷ 1张 1:1 1K</button>
             <button id="submitJob" class="send-button" type="button">➤</button>
             <button id="clearPrompt" class="clear-prompt-button" type="button" title="清空提示词" aria-label="清空提示词">×</button>
           </div>
@@ -647,7 +654,7 @@
               <label><span>比例</span><select id="quickAspect"></select></label>
               <button id="matchReferenceAspect" class="reference-aspect-button hidden" type="button">按参考图比例</button>
               <label><span>分辨率</span><select id="quickResolution"></select></label>
-              <label><span>并发</span><input id="quickConcurrency" type="number" min="1" max="6"></label>
+              <label><span>并发</span><input id="quickConcurrency" type="number" min="1" max="20" readonly></label>
               <label><span>质量</span><select id="quickQuality"></select></label>
               <label><span>格式</span><select id="quickFormat"></select></label>
             </div>
@@ -851,7 +858,7 @@
           <details class="advanced-generation-options">
             <summary>高级参数</summary>
             <div class="settings-grid">
-              <label><span>并发</span><input id="concurrency" type="number" min="1" max="6" value="2"></label>
+              <label><span>并发</span><input id="concurrency" type="number" min="1" max="20" value="1" readonly></label>
               <label><span>失败自动重试</span><input id="retryLimit" type="number" min="0" max="5" value="2"></label>
               <label><span>Seed</span><input id="seed" placeholder="可选，留空随机"></label>
             </div>
