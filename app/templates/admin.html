@@ -235,7 +235,7 @@
         {% for item in media_items[:80] %}
           <article class="admin-image-card">
             <label><input form="bulkMedia" type="checkbox" name="media_id" value="{{ item.id }}"><span>选择</span></label>
-            <a class="admin-image-preview-link" href="{{ item.url }}" target="_blank" rel="noopener" title="打开大图预览">
+            <a class="admin-image-preview-link" href="{{ item.url }}" data-admin-image-preview data-url="{{ item.url }}" data-title="Job {{ item.job_id }} · #{{ item.index }}" data-meta="{% if item.actual_size %}{{ item.actual_size }} · {% endif %}{{ item.created_at|ctime }}" data-prompt="{{ item.prompt|e }}" title="打开大图预览">
               <img src="{{ item.url }}" alt="">
             </a>
             <div>
@@ -243,7 +243,7 @@
               <p>{{ item.prompt }}</p>
               <small>Job {{ item.job_id }} · #{{ item.index }}{% if item.actual_size %} · {{ item.actual_size }}{% endif %}</small>
               <div class="admin-image-actions">
-                <a href="{{ item.url }}" target="_blank" rel="noopener">预览</a>
+                <button type="button" data-admin-image-preview data-url="{{ item.url }}" data-title="Job {{ item.job_id }} · #{{ item.index }}" data-meta="{% if item.actual_size %}{{ item.actual_size }} · {% endif %}{{ item.created_at|ctime }}" data-prompt="{{ item.prompt|e }}">预览</button>
                 <a href="{{ item.url }}" download>下载</a>
               </div>
             </div>
@@ -590,7 +590,126 @@
     </div>
   </main>
 
+  <div id="adminMediaPreviewModal" class="media-preview-modal hidden" role="dialog" aria-modal="true" aria-labelledby="adminMediaPreviewTitle">
+    <section class="media-preview-panel">
+      <header class="media-preview-head">
+        <div>
+          <strong id="adminMediaPreviewTitle">图片预览</strong>
+          <span id="adminMediaPreviewMeta">管理后台图片记录</span>
+        </div>
+        <button class="icon-button" id="adminCloseMediaPreview" type="button" aria-label="关闭图片预览">×</button>
+      </header>
+      <div class="media-preview-content">
+        <div id="adminMediaPreviewImageWrap" class="media-preview-image-wrap" tabindex="0" aria-label="图片预览，滚轮缩放，拖拽移动，双击复位">
+          <img id="adminMediaPreviewImage" alt="">
+        </div>
+        <aside class="media-preview-info admin-media-preview-info">
+          <div class="image-agent-tag">后台图片管理</div>
+          <p id="adminMediaPreviewPrompt"></p>
+        </aside>
+      </div>
+    </section>
+  </div>
+
   <script>
+    const adminPreviewModal = document.querySelector("#adminMediaPreviewModal");
+    const adminPreviewImageWrap = document.querySelector("#adminMediaPreviewImageWrap");
+    const adminPreviewImage = document.querySelector("#adminMediaPreviewImage");
+    const adminPreviewTitle = document.querySelector("#adminMediaPreviewTitle");
+    const adminPreviewMeta = document.querySelector("#adminMediaPreviewMeta");
+    const adminPreviewPrompt = document.querySelector("#adminMediaPreviewPrompt");
+    let adminPreviewScale = 1;
+    let adminPreviewTranslate = { x: 0, y: 0 };
+    let adminPreviewDrag = null;
+    const clampAdminPreviewScale = (value) => Math.max(0.35, Math.min(5, value));
+    const syncAdminPreviewTransform = () => {
+      if (!adminPreviewImage) return;
+      adminPreviewImage.style.transform = `translate3d(${adminPreviewTranslate.x}px, ${adminPreviewTranslate.y}px, 0) scale(${adminPreviewScale})`;
+      adminPreviewImage.style.cursor = adminPreviewScale > 1 ? "grab" : "zoom-in";
+    };
+    const resetAdminPreviewTransform = () => {
+      adminPreviewScale = 1;
+      adminPreviewTranslate = { x: 0, y: 0 };
+      adminPreviewDrag = null;
+      syncAdminPreviewTransform();
+    };
+    const setAdminPreview = (open, data = {}) => {
+      if (!adminPreviewModal) return;
+      adminPreviewModal.classList.toggle("hidden", !open);
+      document.body.classList.toggle("media-preview-open", open);
+      resetAdminPreviewTransform();
+      if (!open) {
+        adminPreviewImage?.removeAttribute("src");
+        return;
+      }
+      adminPreviewTitle.textContent = data.title || "图片预览";
+      adminPreviewMeta.textContent = data.meta || "管理后台图片记录";
+      adminPreviewPrompt.textContent = data.prompt || "暂无提示词";
+      adminPreviewImage.src = data.url || "";
+      adminPreviewImage.alt = data.prompt || "生成图片";
+      adminPreviewImageWrap?.focus({ preventScroll: true });
+    };
+    document.querySelectorAll("[data-admin-image-preview]").forEach((trigger) => {
+      trigger.addEventListener("click", (event) => {
+        event.preventDefault();
+        setAdminPreview(true, {
+          url: trigger.dataset.url || trigger.getAttribute("href") || "",
+          title: trigger.dataset.title || "图片预览",
+          meta: trigger.dataset.meta || "管理后台图片记录",
+          prompt: trigger.dataset.prompt || "",
+        });
+      });
+    });
+    document.querySelector("#adminCloseMediaPreview")?.addEventListener("click", () => setAdminPreview(false));
+    adminPreviewModal?.addEventListener("click", (event) => {
+      if (event.target === adminPreviewModal) setAdminPreview(false);
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !adminPreviewModal?.classList.contains("hidden")) setAdminPreview(false);
+    });
+    adminPreviewImageWrap?.addEventListener("wheel", (event) => {
+      if (adminPreviewModal?.classList.contains("hidden")) return;
+      event.preventDefault();
+      adminPreviewScale = clampAdminPreviewScale(adminPreviewScale * (event.deltaY < 0 ? 1.12 : 0.88));
+      if (adminPreviewScale <= 1.01) {
+        adminPreviewScale = 1;
+        adminPreviewTranslate = { x: 0, y: 0 };
+      }
+      syncAdminPreviewTransform();
+    }, { passive: false });
+    adminPreviewImageWrap?.addEventListener("dblclick", resetAdminPreviewTransform);
+    adminPreviewImageWrap?.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || adminPreviewScale <= 1) return;
+      adminPreviewDrag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        baseX: adminPreviewTranslate.x,
+        baseY: adminPreviewTranslate.y,
+      };
+      adminPreviewImageWrap.setPointerCapture?.(event.pointerId);
+      adminPreviewImageWrap.classList.add("dragging");
+      event.preventDefault();
+    });
+    adminPreviewImageWrap?.addEventListener("pointermove", (event) => {
+      if (!adminPreviewDrag || adminPreviewDrag.pointerId !== event.pointerId) return;
+      adminPreviewTranslate = {
+        x: adminPreviewDrag.baseX + event.clientX - adminPreviewDrag.startX,
+        y: adminPreviewDrag.baseY + event.clientY - adminPreviewDrag.startY,
+      };
+      syncAdminPreviewTransform();
+      event.preventDefault();
+    });
+    const finishAdminPreviewDrag = (event) => {
+      if (adminPreviewDrag?.pointerId === event.pointerId) {
+        adminPreviewDrag = null;
+        adminPreviewImageWrap?.classList.remove("dragging");
+      }
+      adminPreviewImageWrap?.releasePointerCapture?.(event.pointerId);
+    };
+    adminPreviewImageWrap?.addEventListener("pointerup", finishAdminPreviewDrag);
+    adminPreviewImageWrap?.addEventListener("pointercancel", finishAdminPreviewDrag);
+
     document.querySelectorAll("[data-check-all]").forEach((box) => {
       const selector = `input[name="${CSS.escape(box.dataset.checkAll)}"]`;
       const syncCheckAll = () => {

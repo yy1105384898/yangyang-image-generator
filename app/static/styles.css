@@ -4566,8 +4566,30 @@ body:has(.app-shell:not(.settings-open)) .guide-step-compose .onboarding-spotlig
   font-weight: 880;
   text-decoration: none;
 }
-.admin-image-actions a:hover {
+.admin-image-actions button {
+  display: inline-grid;
+  min-height: 24px;
+  place-items: center;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: #e8f8f2;
+  color: #00665f;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 880;
+  text-decoration: none;
+}
+.admin-image-actions a:hover,
+.admin-image-actions button:hover {
   background: #d7f1e7;
+}
+.admin-page .media-preview-modal {
+  z-index: 100;
+}
+.admin-media-preview-info .image-agent-tag {
+  background: #eef4ef;
+  color: #00665f;
 }
 .admin-log-list {
   display: grid;
